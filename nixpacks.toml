@@ -1,0 +1,11 @@
+# nixpacks.toml (in root directory)
+providers = ["python"]
+
+[phases.setup]
+nixPkgs = ["python311", "gcc", "postgresql"]
+
+[phases.install]
+cmds = ["python -m venv /opt/venv", ". /opt/venv/bin/activate", "pip install --upgrade pip setuptools wheel", "pip install -r backend/requirements.txt"]
+
+[start]
+cmd = "cd backend && python main.py"
