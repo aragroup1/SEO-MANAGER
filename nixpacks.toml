@@ -1,4 +1,4 @@
-# nixpacks.toml (in root directory)
+# nixpacks.toml
 providers = ["python"]
 
 [phases.setup]
@@ -13,5 +13,5 @@ cmds = [
 ]
 
 [start]
-# Fix: Use full path and ensure venv is activated
+# Remove redundant pip install from start command
 cmd = ". /opt/venv/bin/activate && cd /app/backend && python main.py"
