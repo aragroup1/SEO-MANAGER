@@ -5,7 +5,13 @@ providers = ["python"]
 nixPkgs = ["python311", "gcc", "postgresql"]
 
 [phases.install]
-cmds = ["python -m venv /opt/venv", ". /opt/venv/bin/activate", "pip install --upgrade pip setuptools wheel", "pip install -r backend/requirements.txt"]
+cmds = [
+    "python -m venv /opt/venv",
+    ". /opt/venv/bin/activate",
+    "pip install --upgrade pip setuptools wheel",
+    "pip install -r backend/requirements.txt"
+]
 
 [start]
-cmd = "cd backend && python main.py"
+# Fix: Use full path and ensure venv is activated
+cmd = ". /opt/venv/bin/activate && cd /app/backend && python main.py"
