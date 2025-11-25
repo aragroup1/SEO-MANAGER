@@ -1,3 +1,8 @@
+# backend/audit_engine.py - Add at the top
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # backend/audit_engine.py - Comprehensive Audit System
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
@@ -21,6 +26,11 @@ from selenium.webdriver.chrome.options import Options
 import cv2
 from PIL import Image
 import pytesseract
+
+from main import (
+    Website, Optimization, SessionLocal, 
+    get_db, send_audit_notification
+)
 
 class AuditType(Enum):
     TECHNICAL = "technical"
