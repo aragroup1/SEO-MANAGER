@@ -2,16 +2,16 @@
 providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python311", "gcc", "postgresql"]
+nixPkgs = ["python311", "gcc", "postgresql", "bash"]
 
 [phases.install]
 cmds = [
     "python -m venv /opt/venv",
     ". /opt/venv/bin/activate",
     "pip install --upgrade pip setuptools wheel",
-    "pip install -r backend/requirements.txt"
+    "pip install -r backend/requirements.txt",
+    "chmod +x backend/start.sh"
 ]
 
 [start]
-# Remove redundant pip install from start command
-cmd = ". /opt/venv/bin/activate && cd /app/backend && python main.py"
+cmd = "bash /app/backend/start.sh"
