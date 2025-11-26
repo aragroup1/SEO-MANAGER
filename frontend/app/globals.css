@@ -1,4 +1,15 @@
 /* frontend/app/globals.css */
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Force background gradient */
+body {
+  background: linear-gradient(135deg, #1a1a2e 0%, #6b46c1 50%, #1a1a2e 100%);
+  min-height: 100vh;
+}
+
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
