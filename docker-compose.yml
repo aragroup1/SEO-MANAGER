@@ -18,11 +18,16 @@ services:
     ports:
       - "6379:6379"
 
+  # 1. Main API Backend Service
   backend:
     build: ./backend
+    # Use the custom start.sh script to run migrations and then uvicorn
+    command: bash /app/backend/start.sh
     environment:
       DATABASE_URL: postgresql://seo_user:seo_password@postgres/seo_tool
       REDIS_URL: redis://redis:6379
+      # Add this environment variable to distinguish the service
+      SERVICE_TYPE: API
     env_file:
       - .env
     ports:
@@ -31,7 +36,27 @@ services:
       - postgres
       - redis
     volumes:
-      - ./backend:/app
+      - ./backend:/app/backend
+
+  # 2. Separate Worker Service for Scheduled Jobs (audits, etc.)
+  worker:
+    build: ./backend
+    # Use a direct command to run the worker script
+    command: python /app/backend/worker.py
+    environment:
+      DATABASE_URL: postgresql://seo_user:seo_password@postgres/seo_tool
+      REDIS_URL: redis://redis:6379
+      SERVICE_TYPE: WORKER
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app/backend
+    # Workers do not need exposed ports
+    # Add a restart policy for stability
+    restart: on-failure
 
   frontend:
     build: ./frontend
