@@ -1,9 +1,9 @@
 {
-  "name": "seo-intelligence-platform",
-  "version": "1.0.0",
-  "private": true,
-  "workspaces": [
-    "frontend",
-    "backend"
-  ]
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "node server.js",
+    "start:next": "next start -p ${PORT:-8080}",
+    "lint": "next lint"
+  }
 }
