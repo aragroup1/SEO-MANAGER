@@ -1,12 +1,11 @@
-// frontend/package.json
 {
-  "name": "seo-intelligence-platform",
+  "name": "seo-intelligence-frontend",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p ${PORT:-8080}",
     "lint": "next lint"
   },
   "dependencies": {
