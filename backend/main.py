@@ -1,7 +1,7 @@
-# backend/main.py - Complete FastAPI Backend with Error Handling
+# backend/main.py - Complete FastAPI Backend with Database and Models
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any, Literal
 from datetime import datetime, timedelta
@@ -14,9 +14,21 @@ import secrets
 from enum import Enum as PyEnum
 from urllib.parse import urlparse
 
+# Database Imports
+from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Text, JSON, Boolean, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session, relationship
+
+# Scheduler Import
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# Import the audit engine (needed for manual audit triggering)
+from audit_engine import SEOAuditEngine
+from worker import run_daily_audits # Import the core worker function
+
 load_dotenv()
 
-# Initialize FastAPI first
+# --- Initialization ---
 app = FastAPI(title="SEO Intelligence Platform")
 
 # CORS
@@ -28,370 +40,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database setup with Railway fix
+# --- Database Setup ---
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://seo_user:seo_password@localhost/seo_tool")
 # Fix Railway's postgres:// to postgresql://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Text, JSON, Boolean, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
-
 try:
     engine = create_engine(DATABASE_URL)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base = declarative_base()
-    print(f"Database connected successfully")
+    Base = declarative_base() # Define Base here, used by all models
+    print("Database connection successfully initialized.")
 except Exception as e:
     print(f"Database connection error: {e}")
-    # Fallback to SQLite for health checks
-    engine = create_engine("sqlite:///./test.db")
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base = declarative_base()
+    sys.exit(1) # Exit if essential database connection fails
 
-# Initialize services with error handling
-try:
-    from redis import Redis
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    redis_client = Redis.from_url(redis_url)
-    redis_client.ping()
-    print("Redis connected successfully")
-except Exception as e:
-    print(f"Redis connection error: {e}")
-    redis_client = None
-
-try:
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    scheduler = AsyncIOScheduler()
-except Exception as e:
-    print(f"Scheduler error: {e}")
-    scheduler = None
-
-try:
-    from anthropic import Anthropic
-    anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", "dummy"))
-except Exception as e:
-    print(f"Anthropic initialization error: {e}")
-    anthropic = None
-
-try:
-    import openai
-    openai.api_key = os.getenv("OPENAI_API_KEY", "dummy")
-except Exception as e:
-    print(f"OpenAI initialization error: {e}")
-
-try:
-    import resend
-    resend.api_key = os.getenv("RESEND_API_KEY", "")
-except Exception as e:
-    print(f"Resend initialization error: {e}")
-
-# Optional imports
-try:
-    import pandas as pd
-    import numpy as np
-except ImportError as e:
-    print(f"Data library import error: {e}")
-    pd = None
-    np = None
-
-try:
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import Flow
-    from googleapiclient.discovery import build
-    from google.analytics.data_v1beta import BetaAnalyticsDataClient
-    GOOGLE_AVAILABLE = True
-except ImportError as e:
-    print(f"Google libraries not available: {e}")
-    GOOGLE_AVAILABLE = False
-
-try:
-    import shopify
-    SHOPIFY_AVAILABLE = True
-except ImportError as e:
-    print(f"Shopify library not available: {e}")
-    SHOPIFY_AVAILABLE = False
-
-try:
-    from bs4 import BeautifulSoup
-    import aiohttp
-    import httpx
-    WEB_SCRAPING_AVAILABLE = True
-except ImportError as e:
-    print(f"Web scraping libraries not available: {e}")
-    WEB_SCRAPING_AVAILABLE = False
-
-# Enums
-class ApprovalStatus(PyEnum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    AUTO_APPROVED = "auto_approved"
-
-class ErrorSeverity(PyEnum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-# Database Models
-class User(Base):
-    __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True)
-    name = Column(String)
-    company = Column(String)
-    subscription_tier = Column(String, default="free")
-    api_key = Column(String, unique=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    websites = relationship("Website", back_populates="user", cascade="all, delete-orphan")
-    integrations = relationship("Integration", back_populates="user", cascade="all, delete-orphan")
-
-class Website(Base):
-    __tablename__ = "websites"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    domain = Column(String, unique=True, index=True)
-    site_type = Column(String, default="custom")
-    shopify_store_url = Column(String)
-    shopify_access_token = Column(String)
-    google_analytics_property_id = Column(String)
-    google_search_console_property = Column(String)
-    google_merchant_id = Column(String)
-    google_business_profile_id = Column(String)
-    google_credentials = Column(JSON)
-    monthly_traffic = Column(Integer)
-    industry = Column(String)
-    competitors = Column(JSON)
-    auto_optimize = Column(Boolean, default=False)
-    optimization_settings = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    user = relationship("User", back_populates="websites")
-    integrations = relationship("WebsiteIntegration", back_populates="website", cascade="all, delete-orphan")
-    optimizations = relationship("Optimization", back_populates="website", cascade="all, delete-orphan")
-    errors = relationship("ErrorLog", back_populates="website", cascade="all, delete-orphan")
-    keywords = relationship("Keyword", back_populates="website", cascade="all, delete-orphan")
-    rankings = relationship("Ranking", back_populates="website", cascade="all, delete-orphan")
-    strategies = relationship("Strategy", back_populates="website", cascade="all, delete-orphan")
-    audits = relationship("SiteAudit", back_populates="website", cascade="all, delete-orphan")
-    ai_searches = relationship("AISearchOptimization", back_populates="website", cascade="all, delete-orphan")
-    content_calendar = relationship("ContentCalendar", back_populates="website", cascade="all, delete-orphan")
-
-class Integration(Base):
-    __tablename__ = "integrations"
-    
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    type = Column(String)
-    name = Column(String)
-    access_token = Column(Text)
-    refresh_token = Column(Text)
-    expires_at = Column(DateTime)
-    credentials = Column(JSON)
-    scope = Column(String)
-    status = Column(String, default="active")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    user = relationship("User", back_populates="integrations")
-
-class WebsiteIntegration(Base):
-    __tablename__ = "website_integrations"
-    
-    id = Column(Integer, primary_key=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    integration_id = Column(Integer, ForeignKey("integrations.id"))
-    config = Column(JSON)
-    enabled = Column(Boolean, default=True)
-    
-    website = relationship("Website", back_populates="integrations")
-    integration = relationship("Integration")
-
-class Keyword(Base):
-    __tablename__ = "keywords"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    keyword = Column(String, index=True)
-    search_volume = Column(Integer)
-    difficulty = Column(Float)
-    cpc = Column(Float)
-    intent = Column(String)
-    priority = Column(Integer)
-    target_url = Column(String)
-    competitor_analysis = Column(JSON)
-    ai_search_visibility = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    website = relationship("Website", back_populates="keywords")
-    rankings = relationship("Ranking", back_populates="keyword")
-
-class Ranking(Base):
-    __tablename__ = "rankings"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    keyword_id = Column(Integer, ForeignKey("keywords.id"))
-    position = Column(Integer)
-    url = Column(String)
-    featured_snippet = Column(Boolean, default=False)
-    people_also_ask = Column(Boolean, default=False)
-    knowledge_panel = Column(Boolean, default=False)
-    ai_overview_present = Column(Boolean, default=False)
-    ai_overview_position = Column(Integer)
-    clicks = Column(Integer)
-    impressions = Column(Integer)
-    ctr = Column(Float)
-    date = Column(DateTime, default=datetime.utcnow)
-    
-    website = relationship("Website", back_populates="rankings")
-    keyword = relationship("Keyword", back_populates="rankings")
-
-class Strategy(Base):
-    __tablename__ = "strategies"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    type = Column(String)
-    title = Column(String)
-    description = Column(Text)
-    priority = Column(Integer)
-    status = Column(String, default="pending")
-    impact_score = Column(Float)
-    estimated_traffic_gain = Column(Integer)
-    ai_recommendations = Column(JSON)
-    execution_plan = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    executed_at = Column(DateTime)
-    
-    website = relationship("Website", back_populates="strategies")
-
-class Optimization(Base):
-    __tablename__ = "optimizations"
-    
-    id = Column(Integer, primary_key=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    type = Column(String)
-    entity_type = Column(String)
-    entity_id = Column(String)
-    current_value = Column(Text)
-    suggested_value = Column(Text)
-    ai_reasoning = Column(Text)
-    impact_score = Column(Float)
-    approval_status = Column(String, default="pending")
-    approved_by = Column(Integer, ForeignKey("users.id"))
-    approved_at = Column(DateTime)
-    applied_at = Column(DateTime)
-    rollback_data = Column(JSON)
-    performance_before = Column(JSON)
-    performance_after = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    website = relationship("Website", back_populates="optimizations")
-
-class ErrorLog(Base):
-    __tablename__ = "error_logs"
-    
-    id = Column(Integer, primary_key=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    error_type = Column(String)
-    severity = Column(String)
-    title = Column(String)
-    description = Column(Text)
-    affected_urls = Column(JSON)
-    auto_fixed = Column(Boolean, default=False)
-    fix_applied = Column(Text)
-    detected_at = Column(DateTime, default=datetime.utcnow)
-    resolved_at = Column(DateTime)
-    
-    website = relationship("Website", back_populates="errors")
-
-class AISearchOptimization(Base):
-    __tablename__ = "ai_search_optimizations"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    platform = Column(String)
-    visibility_score = Column(Float)
-    recommendations = Column(JSON)
-    structured_data_suggestions = Column(JSON)
-    content_gaps = Column(JSON)
-    entity_optimization = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    website = relationship("Website", back_populates="ai_searches")
-
-class ContentCalendar(Base):
-    __tablename__ = "content_calendar"
-    
-    id = Column(Integer, primary_key=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    title = Column(String)
-    content_type = Column(String)
-    target_keywords = Column(JSON)
-    publish_date = Column(DateTime)
-    status = Column(String, default="draft")
-    ai_generated_content = Column(Text)
-    seo_score = Column(Float)
-    estimated_traffic = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    website = relationship("Website", back_populates="content_calendar")
-
-class CompetitorAnalysis(Base):
-    __tablename__ = "competitor_analyses"
-    
-    id = Column(Integer, primary_key=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    competitor_domain = Column(String)
-    traffic_estimate = Column(Integer)
-    keyword_overlap = Column(JSON)
-    content_gaps = Column(JSON)
-    backlink_gaps = Column(JSON)
-    winning_keywords = Column(JSON)
-    losing_keywords = Column(JSON)
-    analyzed_at = Column(DateTime, default=datetime.utcnow)
-
-# Audit models - define here instead of importing
-class SiteAudit(Base):
-    __tablename__ = "site_audits"
-    
-    id = Column(Integer, primary_key=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    audit_date = Column(DateTime, default=datetime.utcnow)
-    health_score = Column(Float)
-    previous_score = Column(Float)
-    score_change = Column(Float)
-    technical_score = Column(Float)
-    content_score = Column(Float)
-    performance_score = Column(Float)
-    mobile_score = Column(Float)
-    security_score = Column(Float)
-    total_issues = Column(Integer)
-    critical_issues = Column(Integer)
-    errors = Column(Integer)
-    warnings = Column(Integer)
-    notices = Column(Integer)
-    pages_crawled = Column(Integer)
-    new_issues = Column(Integer)
-    fixed_issues = Column(Integer)
-    
-    website = relationship("Website", back_populates="audits")
-
-# Create tables
-try:
-    Base.metadata.create_all(bind=engine)
-    print("Database tables created successfully")
-except Exception as e:
-    print(f"Error creating tables: {e}")
-
-# Dependency
+# Dependency to get a database session
 def get_db():
     db = SessionLocal()
     try:
@@ -399,195 +63,299 @@ def get_db():
     finally:
         db.close()
 
-# OAuth Configuration
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+# --- Database Models ---
+class Website(Base):
+    __tablename__ = "websites"
+    id = Column(Integer, primary_key=True, index=True)
+    domain = Column(String, unique=True, index=True, nullable=False)
+    api_key = Column(String, unique=True, index=True, default=lambda: secrets.token_urlsafe(16))
+    last_audit = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
 
-SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
-SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
-SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "http://localhost:8000/auth/shopify/callback")
+    # Relationships
+    audits = relationship("AuditReport", back_populates="website", cascade="all, delete-orphan")
+    content_items = relationship("ContentItem", back_populates="website", cascade="all, delete-orphan")
 
-# API Endpoints - HEALTH CHECK FIRST
-@app.get("/health")
-async def health_check():
-    """Health check endpoint that always works"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0",
-        "database": "connected" if engine else "not connected",
-        "redis": "connected" if redis_client else "not connected"
-    }
+class AuditReport(Base):
+    __tablename__ = "audit_reports"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"))
+    audit_date = Column(DateTime, default=datetime.utcnow)
+    health_score = Column(Float)
+    technical_score = Column(Float)
+    content_score = Column(Float)
+    performance_score = Column(Float)
+    mobile_score = Column(Float)
+    security_score = Column(Float)
+    
+    # Issue summary
+    total_issues = Column(Integer)
+    critical_issues = Column(Integer)
+    errors = Column(Integer)
+    warnings = Column(Integer)
+    
+    # JSON field to store detailed, unstructured audit findings (issues, recommendations)
+    detailed_findings = Column(JSON, default={
+        "issues": [], 
+        "recommendations": []
+    })
+
+    website = relationship("Website", back_populates="audits")
+
+class ContentItem(Base):
+    __tablename__ = "content_calendar"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"))
+    title = Column(String, nullable=False)
+    content_type = Column(String) # e.g., 'Blog Post', 'Landing Page'
+    publish_date = Column(DateTime)
+    status = Column(String) # e.g., 'Draft', 'Published', 'Scheduled'
+    keywords_target = Column(JSON) # List of target keywords
+    ai_generated_content = Column(Text)
+
+    website = relationship("Website", back_populates="content_items")
+
+
+# --- Pydantic Schemas ---
+class WebsiteCreate(BaseModel):
+    domain: str = Field(..., example="example.com")
+
+class AuditReportSummary(BaseModel):
+    health_score: float
+    technical_score: float
+    content_score: float
+    performance_score: float
+    mobile_score: float
+    security_score: float
+    total_issues: int
+    critical_issues: int
+    errors: int
+    warnings: int
+    audit_date: datetime
+
+class AuditFull(BaseModel):
+    audit: Dict[str, Any]
+    issues: List[Dict[str, Any]]
+    recommendations: List[Dict[str, Any]]
+
+class ContentItemModel(BaseModel):
+    id: int
+    website_id: int
+    title: str
+    content_type: str
+    publish_date: datetime
+    status: str
+    keywords_target: List[str]
+    ai_generated_content: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+# --- API Endpoints ---
 
 @app.get("/")
-async def root():
-    """Root endpoint"""
-    return {"message": "SEO Intelligence Platform API", "version": "1.0.0"}
+def read_root():
+    return RedirectResponse(url="/docs")
 
-# ALL YOUR ORIGINAL ENDPOINTS
-@app.post("/users/register")
-async def register_user(
-    email: str,
-    name: str,
-    company: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    existing_user = db.query(User).filter(User.email == email).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="User already exists")
+@app.post("/api/websites")
+async def register_website(new_website: WebsiteCreate, db: Session = Depends(get_db)):
+    # Basic domain validation
+    if not urlparse(f"http://{new_website.domain}").netloc:
+        raise HTTPException(status_code=400, detail="Invalid domain format")
     
-    user = User(
-        email=email,
-        name=name,
-        company=company,
-        api_key=secrets.token_urlsafe(32)
-    )
-    db.add(user)
+    # Check if exists
+    if db.query(Website).filter(Website.domain == new_website.domain).first():
+        raise HTTPException(status_code=409, detail="Website already registered")
+
+    db_website = Website(domain=new_website.domain)
+    db.add(db_website)
     db.commit()
-    db.refresh(user)
+    db.refresh(db_website)
     
-    return {"user_id": user.id, "api_key": user.api_key}
+    # Trigger an immediate first audit in the background
+    BackgroundTasks().add_task(SEOAuditEngine(db_website.id).run_comprehensive_audit)
+    
+    return {"message": "Website registered and first audit initiated.", "id": db_website.id, "domain": db_website.domain}
 
-@app.post("/websites")
-async def create_website(
-    domain: str,
-    user_id: int,
-    site_type: str = "custom",
-    shopify_store_url: Optional[str] = None,
-    shopify_access_token: Optional[str] = None,
-    google_analytics_property_id: Optional[str] = None,
-    google_credentials: Optional[Dict] = None,
-    db: Session = Depends(get_db)
-):
-    website = Website(
-        user_id=user_id,
-        domain=domain,
-        site_type=site_type,
-        shopify_store_url=shopify_store_url,
-        shopify_access_token=shopify_access_token,
-        google_analytics_property_id=google_analytics_property_id,
-        google_credentials=google_credentials
-    )
-    db.add(website)
-    db.commit()
-    db.refresh(website)
-    return {"id": website.id, "domain": website.domain}
+@app.get("/api/websites", response_model=List[Dict[str, Any]])
+async def get_websites(db: Session = Depends(get_db)):
+    websites = db.query(Website).all()
+    # Simple serialization for the endpoint
+    return [
+        {
+            "id": w.id, 
+            "domain": w.domain, 
+            "last_audit": w.last_audit.isoformat() if w.last_audit else None,
+            "api_key": w.api_key # Should be hidden in production, but useful for testing
+        } for w in websites
+    ]
 
-@app.get("/websites")
-async def get_websites(
-    user_id: Optional[int] = None,
-    db: Session = Depends(get_db)
-):
-    query = db.query(Website)
-    if user_id:
-        query = query.filter(Website.user_id == user_id)
-    websites = query.all()
-    return [{"id": w.id, "domain": w.domain} for w in websites]
 
-@app.get("/websites/{website_id}")
-async def get_website(
-    website_id: int,
-    db: Session = Depends(get_db)
-):
+@app.post("/api/audit/{website_id}/start")
+async def start_new_audit(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
-    return {"id": website.id, "domain": website.domain, "created_at": website.created_at}
+    
+    # Check if an audit is already running (simplified check)
+    # In a real system, you'd use Redis/database flags for this
+    
+    # Add the audit task to run in the background
+    background_tasks.add_task(SEOAuditEngine(website_id).run_comprehensive_audit)
+    
+    return {"status": "success", "message": f"Comprehensive audit initiated for {website.domain}"}
 
-@app.get("/websites/{website_id}/dashboard")
-async def get_dashboard_data(
-    website_id: int,
-    db: Session = Depends(get_db)
-):
-    website = db.query(Website).filter(Website.id == website_id).first()
-    if not website:
-        # Return mock data if website not found
-        return {
-            'website': {
-                'domain': 'example.com',
-                'created_at': datetime.utcnow().isoformat()
+@app.get("/api/audit/{website_id}", response_model=AuditFull)
+async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)):
+    # Get the latest audit report
+    latest_report = db.query(AuditReport)\
+        .filter(AuditReport.website_id == website_id)\
+        .order_by(AuditReport.audit_date.desc())\
+        .first()
+
+    if not latest_report:
+        # Fallback to mock data if no real audit exists
+        # In a real app, this should be a 404 or a 'loading' status
+        mock_data = {
+            "audit": {
+                "id": 0,
+                "health_score": 78,
+                "previous_score": 75,
+                "score_change": 3,
+                "technical_score": 82,
+                "content_score": 76,
+                "performance_score": 71,
+                "mobile_score": 85,
+                "security_score": 90,
+                "total_issues": 23,
+                "critical_issues": 2,
+                "errors": 5,
+                "warnings": 10,
+                "notices": 6,
+                "new_issues": 3,
+                "fixed_issues": 7,
+                "audit_date": datetime.utcnow().isoformat()
             },
-            'metrics': {
-                'total_keywords': 150,
-                'top_10_rankings': 25,
-                'average_position': 18.5,
-                'ai_visibility_score': 72
-            },
-            'active_strategies': [],
-            'recent_rankings': []
+            "issues": [],
+            "recommendations": []
         }
-    
-    total_keywords = db.query(Keyword).filter(Keyword.website_id == website_id).count()
-    
-    return {
-        'website': {
-            'domain': website.domain,
-            'created_at': website.created_at.isoformat() if website.created_at else None
-        },
-        'metrics': {
-            'total_keywords': total_keywords,
-            'top_10_rankings': 0,
-            'average_position': 0,
-            'ai_visibility_score': 0
-        },
-        'active_strategies': [],
-        'recent_rankings': []
-    }
+        return mock_data
 
-# Mock endpoints for frontend
-@app.get("/api/audits/{website_id}/latest")
-async def get_latest_audit(website_id: int):
+    # Deserialize the detailed findings
+    findings = latest_report.detailed_findings or {"issues": [], "recommendations": []}
+
     return {
         "audit": {
-            "id": 1,
-            "health_score": 78,
-            "previous_score": 75,
-            "score_change": 3,
-            "technical_score": 82,
-            "content_score": 76,
-            "performance_score": 71,
-            "mobile_score": 85,
-            "security_score": 90,
-            "total_issues": 23,
-            "critical_issues": 2,
-            "errors": 5,
-            "warnings": 10,
-            "notices": 6,
-            "new_issues": 3,
-            "fixed_issues": 7,
-            "audit_date": datetime.utcnow().isoformat()
+            "id": latest_report.id,
+            "health_score": latest_report.health_score,
+            # Placeholder for change tracking, which would need more reports
+            "previous_score": latest_report.health_score - 3, 
+            "score_change": 3, 
+            "technical_score": latest_report.technical_score,
+            "content_score": latest_report.content_score,
+            "performance_score": latest_report.performance_score,
+            "mobile_score": latest_report.mobile_score,
+            "security_score": latest_report.security_score,
+            "total_issues": latest_report.total_issues,
+            "critical_issues": latest_report.critical_issues,
+            "errors": latest_report.errors,
+            "warnings": latest_report.warnings,
+            # These are simplified for the model
+            "notices": latest_report.total_issues - latest_report.critical_issues - latest_report.errors - latest_report.warnings,
+            "new_issues": 0,
+            "fixed_issues": 0,
+            "audit_date": latest_report.audit_date.isoformat()
         },
-        "issues": [],
-        "recommendations": []
+        "issues": findings.get("issues", []),
+        "recommendations": findings.get("recommendations", [])
     }
 
-@app.get("/api/errors/{website_id}")
-async def get_errors(website_id: int):
-    return []
 
-@app.get("/api/content-calendar/{website_id}")
-async def get_content_calendar(website_id: int):
-    return []
+@app.get("/api/errors/{website_id}")
+async def get_errors(website_id: int, db: Session = Depends(get_db)):
+    # In a real implementation, this would query issues from the latest audit report
+    # For now, we return mock errors based on the audit
+    
+    # Re-use the audit data logic to get issues
+    audit_data = await get_latest_audit_report(website_id, db)
+    
+    errors = [
+        issue for issue in audit_data['issues'] 
+        if issue.get('severity', '').lower() in ['critical', 'error', 'high']
+    ]
+
+    # Add a mock 'auto_fixed' status for demonstration in the frontend
+    for i, error in enumerate(errors):
+        error['auto_fixed'] = (i % 3 == 0) # Example: every third error is auto-fixed
+
+    return errors
+
+@app.post("/api/errors/{error_id}/fix")
+async def fix_error(error_id: int):
+    # This is a placeholder for the AI auto-fix logic
+    await asyncio.sleep(2) # Simulate work
+    return {"status": "success", "message": f"Error {error_id} auto-fix attempted."}
+
+@app.get("/api/content-calendar/{website_id}", response_model=List[ContentItemModel])
+async def get_content_calendar(website_id: int, db: Session = Depends(get_db)):
+    content_items = db.query(ContentItem).filter(ContentItem.website_id == website_id).all()
+    if not content_items:
+        # Generate mock data if none exist
+        return [
+            ContentItemModel(
+                id=i+1,
+                website_id=website_id,
+                title=f"The AI Revolution in SEO: A 2024 Guide {i+1}",
+                content_type="Blog Post",
+                publish_date=datetime.utcnow() + timedelta(days=i),
+                status="Scheduled",
+                keywords_target=["AI SEO", "SEO Automation"],
+                ai_generated_content=f"This is the draft content for the post {i+1}. It discusses how artificial intelligence is transforming search engine optimization by automating complex tasks and improving content quality..."
+            ) for i in range(3)
+        ]
+        
+    return content_items
+
+@app.post("/api/content-calendar/{website_id}/generate")
+async def generate_content_calendar(website_id: int, background_tasks: BackgroundTasks):
+    # This would trigger an LLM call to generate new content ideas
+    async def run_generation(website_id: int):
+        print(f"Starting content generation for website {website_id}...")
+        await asyncio.sleep(5) # Simulate LLM generation time
+        print(f"Content generation complete for website {website_id}.")
+    
+    background_tasks.add_task(run_generation, website_id)
+    return {"status": "success", "message": "Content generation initiated in the background."}
+
 
 @app.post("/api/competitors/{website_id}/analyze")
-async def analyze_competitors(website_id: int):
-    return {"status": "analyzing"}
+async def analyze_competitors(website_id: int, background_tasks: BackgroundTasks):
+    # This is a placeholder for the actual API call in the background
+    async def run_competitor_analysis(website_id: int):
+        print(f"Starting competitor analysis for website {website_id}...")
+        # In a real app, this would call RealSEODataProvider.get_competitor_keyword_gap
+        await asyncio.sleep(10) # Simulate API call time
+        print(f"Competitor analysis complete for website {website_id}.")
 
-# Startup event
+    background_tasks.add_task(run_competitor_analysis, website_id)
+    return {"status": "success", "message": "Competitor analysis initiated."}
+
+
+# --- Command Line Tooling ---
+def create_db():
+    Base.metadata.create_all(bind=engine)
+    print("Database tables created successfully.")
+
+# Startup event (The scheduler is handled by the separate worker service now)
 @app.on_event("startup")
 async def startup_event():
-    print(f"Starting SEO Intelligence Platform on port {os.getenv('PORT', 8000)}")
-    if scheduler:
-        try:
-            scheduler.start()
-            print("Scheduler started successfully")
-        except Exception as e:
-            print(f"Scheduler startup error: {e}")
-
-# Main entry point
+    print(f"Starting SEO Intelligence Platform (API Service) on port {os.getenv('PORT', 8000)}")
+    
+# Main execution for command line
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    print(f"Starting server on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    if len(sys.argv) > 1 and sys.argv[1] == "create_db":
+        create_db()
+    else:
+        # For local development without Docker compose, use uvicorn main:app --reload
+        print("Run 'uvicorn main:app --reload' or use the Docker setup.")
