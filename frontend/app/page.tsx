@@ -1,4 +1,3 @@
-// frontend/app/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -16,17 +15,6 @@ import ContentCalendar from '@/components/ContentCalendar';
 import CompetitorAnalysis from '@/components/CompetitorAnalysis';
 import AuditDashboard from '@/components/AuditDashboard';
 import WebsiteManager from '@/components/WebsiteManager';
-
-// Add this import
-import WebsiteManager from '@/components/WebsiteManager';
-
-// Add a new tab for websites
-{ id: 'websites', label: 'Websites', icon: Globe },
-
-// Add the case for rendering
-{activeTab === 'websites' && (
-  <WebsiteManager />
-)}
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview');
@@ -122,6 +110,7 @@ export default function Dashboard() {
         <div className="flex gap-2 mb-8 overflow-x-auto pb-2">
           {[
             { id: 'overview', label: 'Overview', icon: BarChart3 },
+            { id: 'websites', label: 'Websites', icon: Globe },
             { id: 'audit', label: 'Site Audit', icon: Activity },
             { id: 'optimizations', label: 'Optimizations', icon: Sparkles },
             { id: 'errors', label: 'Error Monitor', icon: Shield },
@@ -167,6 +156,10 @@ export default function Dashboard() {
                 </div>
               </motion.div>
             </motion.div>
+          )}
+
+          {activeTab === 'websites' && (
+            <WebsiteManager />
           )}
 
           {activeTab === 'audit' && (
