@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Globe, Plus, Trash2, Edit, ExternalLink, 
-  ShoppingCart, Code, Wordpress, CheckCircle,
+  ShoppingCart, Code, Layers, CheckCircle,  // Changed Wordpress to Layers
   Settings, TrendingUp, AlertCircle, Loader2
 } from 'lucide-react';
 
@@ -83,7 +83,7 @@ export default function WebsiteManager() {
   const getSiteIcon = (type: string) => {
     switch (type) {
       case 'shopify': return <ShoppingCart className="w-5 h-5" />;
-      case 'wordpress': return <Wordpress className="w-5 h-5" />;
+      case 'wordpress': return <Layers className="w-5 h-5" />;  // Changed to Layers icon
       default: return <Code className="w-5 h-5" />;
     }
   };
