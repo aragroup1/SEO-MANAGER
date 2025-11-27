@@ -15,6 +15,18 @@ import ErrorMonitor from '@/components/ErrorMonitor';
 import ContentCalendar from '@/components/ContentCalendar';
 import CompetitorAnalysis from '@/components/CompetitorAnalysis';
 import AuditDashboard from '@/components/AuditDashboard';
+import WebsiteManager from '@/components/WebsiteManager';
+
+// Add this import
+import WebsiteManager from '@/components/WebsiteManager';
+
+// Add a new tab for websites
+{ id: 'websites', label: 'Websites', icon: Globe },
+
+// Add the case for rendering
+{activeTab === 'websites' && (
+  <WebsiteManager />
+)}
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview');
