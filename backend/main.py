@@ -154,6 +154,46 @@ class ContentItemModel(BaseModel):
 
 # --- API Endpoints ---
 
+# Add to your main.py
+
+@app.delete("/websites/{website_id}")
+async def delete_website(
+    website_id: int,
+    db: Session = Depends(get_db)
+):
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+    
+    db.delete(website)
+    db.commit()
+    return {"message": "Website deleted successfully"}
+
+@app.put("/websites/{website_id}")
+async def update_website(
+    website_id: int,
+    domain: Optional[str] = None,
+    monthly_traffic: Optional[int] = None,
+    industry: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+    
+    if domain:
+        website.domain = domain
+    if monthly_traffic:
+        website.monthly_traffic = monthly_traffic
+    if industry:
+        website.industry = industry
+    
+    website.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(website)
+    
+    return website
+
 @app.get("/")
 def read_root():
     return RedirectResponse(url="/docs")
