@@ -145,10 +145,3 @@ export default function GoogleIntegrations({ websiteId }: { websiteId: number })
     </div>
   );
 }
-```
-
-## 4. Update to Use Gemini API
-
-Add to your `.env`:
-```
-GOOGLE_GEMINI_API_KEY=your-api-key
