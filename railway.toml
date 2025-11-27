@@ -1,7 +1,0 @@
-# railway.toml
-[build]
-builder = "NIXPACKS"
-
-[deploy]
-healthcheckPath = "/health"
-startCommand = "cd backend && pip install -r requirements.txt && python main.py"
