@@ -311,7 +311,64 @@ async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)
         "recommendations": findings.get("recommendations", [])
     }
 
+# backend/main.py - Update the create_website endpoint
 
+@app.post("/websites")
+async def create_website(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    data = await request.json()
+    
+    # Create website with proper user handling
+    website = Website(
+        user_id=data.get('user_id', 1),  # Default to user 1 for now
+        domain=data['domain'],
+        site_type=data.get('site_type', 'custom'),
+        shopify_store_url=data.get('shopify_store_url'),
+        shopify_access_token=data.get('shopify_access_token')
+    )
+    
+    try:
+        db.add(website)
+        db.commit()
+        db.refresh(website)
+        
+        # Return the website data
+        return {
+            "id": website.id,
+            "domain": website.domain,
+            "site_type": website.site_type,
+            "created_at": website.created_at.isoformat() if website.created_at else None
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+# Also update the get_websites endpoint to return proper data
+@app.get("/websites")
+async def get_websites(
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(Website)
+    if user_id:
+        query = query.filter(Website.user_id == user_id)
+    
+    websites = query.all()
+    
+    return [
+        {
+            "id": w.id,
+            "domain": w.domain,
+            "site_type": w.site_type,
+            "monthly_traffic": w.monthly_traffic,
+            "health_score": None,  # Will be calculated later
+            "created_at": w.created_at.isoformat() if w.created_at else None
+        }
+        for w in websites
+    ]
+    
 @app.get("/api/errors/{website_id}")
 async def get_errors(website_id: int, db: Session = Depends(get_db)):
     # In a real implementation, this would query issues from the latest audit report
