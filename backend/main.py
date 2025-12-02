@@ -345,6 +345,51 @@ async def create_website(
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
+# backend/main.py - Update the create_website endpoint with better error handling
+
+@app.post("/websites")
+async def create_website(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Log the incoming request
+        data = await request.json()
+        print(f"Received website creation request: {data}")
+        
+        # Validate required fields
+        if not data.get('domain'):
+            raise HTTPException(status_code=400, detail="Domain is required")
+        
+        # Create website
+        website = Website(
+            user_id=data.get('user_id', 1),
+            domain=data['domain'],
+            site_type=data.get('site_type', 'custom'),
+            shopify_store_url=data.get('shopify_store_url'),
+            shopify_access_token=data.get('shopify_access_token')
+        )
+        
+        db.add(website)
+        db.commit()
+        db.refresh(website)
+        
+        print(f"Website created successfully: {website.domain}")
+        
+        # Return the website data
+        return {
+            "id": website.id,
+            "domain": website.domain,
+            "site_type": website.site_type,
+            "created_at": website.created_at.isoformat() if website.created_at else None
+        }
+        
+    except Exception as e:
+        print(f"Error creating website: {str(e)}")
+        db.rollback()
+        # Return more detailed error
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
 # Also update the get_websites endpoint to return proper data
 @app.get("/websites")
 async def get_websites(
