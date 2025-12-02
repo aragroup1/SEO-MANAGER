@@ -44,39 +44,50 @@ export default function WebsiteManager() {
     }
   };
 
-  const addWebsite = async () => {
-    if (!formData.domain) {
-      alert('Please enter a domain');
-      return;
-    }
+  // frontend/components/WebsiteManager.tsx - Update addWebsite function
 
-    setLoading(true);
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/websites`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          user_id: 1
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (response.ok) {
-        await fetchWebsites();
-        setShowAddModal(false);
-        setFormData({ domain: '', site_type: 'custom', shopify_store_url: '', shopify_access_token: '' });
-      } else {
-        alert(data.detail || 'Failed to add website');
-      }
-    } catch (error) {
-      console.error('Error adding website:', error);
-      alert('Failed to add website. Please check your connection.');
-    } finally {
-      setLoading(false);
+const addWebsite = async () => {
+  if (!formData.domain) {
+    alert('Please enter a domain');
+    return;
+  }
+
+  setLoading(true);
+  try {
+    console.log('Sending request to:', `${process.env.NEXT_PUBLIC_API_URL}/websites`);
+    console.log('Request data:', { ...formData, user_id: 1 });
+    
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/websites`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ...formData,
+        user_id: 1
+      })
+    });
+    
+    const data = await response.json();
+    console.log('Response:', response.status, data);
+    
+    if (response.ok) {
+      await fetchWebsites();
+      setShowAddModal(false);
+      setFormData({ domain: '', site_type: 'custom', shopify_store_url: '', shopify_access_token: '' });
+      alert('Website added successfully!');
+    } else {
+      // Show the actual error from backend
+      alert(`Failed to add website: ${data.detail || JSON.stringify(data)}`);
     }
-  };
+  } catch (error) {
+    console.error('Error adding website:', error);
+    // More specific error message
+    alert(`Connection error: ${error.message}. Check console for details.`);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const deleteWebsite = async (id: number) => {
     if (!confirm('Are you sure you want to delete this website?')) return;
