@@ -1,18 +1,11 @@
 # nixpacks.toml
-providers = ["python"]
-
 [phases.setup]
-# Ensure required tools are available
-nixPkgs = ["python311", "gcc", "postgresql", "bash"]
+nixPkgs = ["python311", "gcc", "postgresql"]
 
 [phases.install]
 cmds = [
-    # Use the virtual environment setup in the container
-    "python -m venv /opt/venv",
-    ". /opt/venv/bin/activate",
-    "pip install --upgrade pip setuptools wheel",
-    # Install dependencies from the requirements file located inside the backend directory
-    "pip install -r backend/requirements.txt",
-    # Ensure start script is executable
-    "chmod +x backend/start.sh"
+    "cd backend && pip install -r requirements.txt"
 ]
+
+[start]
+cmd = "cd backend && python main.py"
