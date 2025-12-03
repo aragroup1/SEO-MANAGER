@@ -23,3 +23,4 @@ RUN mkdir -p /app/screenshots /app/temp
 
 # THIS IS THE MISSING LINE - Add the command to run your app
 CMD ["python", "main.py"]
+```
