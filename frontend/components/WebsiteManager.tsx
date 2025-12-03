@@ -44,7 +44,7 @@ export default function WebsiteManager() {
     }
   };
 
-  // frontend/components/WebsiteManager.tsx - Update addWebsite function
+// frontend/components/WebsiteManager.tsx - Fix the error handling
 
 const addWebsite = async () => {
   if (!formData.domain) {
@@ -82,8 +82,9 @@ const addWebsite = async () => {
     }
   } catch (error) {
     console.error('Error adding website:', error);
-    // More specific error message
-    alert(`Connection error: ${error.message}. Check console for details.`);
+    // Fix TypeScript error by checking error type
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    alert(`Connection error: ${errorMessage}. Check console for details.`);
   } finally {
     setLoading(false);
   }
