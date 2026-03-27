@@ -1,42 +1,15 @@
 # backend/integrations.py - Integration management endpoints
 from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import Column, String, Integer, DateTime, Boolean, ForeignKey, JSON
 from datetime import datetime
 from typing import Optional, List, Dict
 import os
 import secrets
 
-from main import Base, SessionLocal, get_db, engine
+from database import SessionLocal, get_db, Integration
 
-# --- Database Model for Integrations ---
-class Integration(Base):
-    __tablename__ = "integrations"
-
-    id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
-    integration_type = Column(String, nullable=False)  # google_search_console, google_analytics, shopify, wordpress
-    status = Column(String, default="pending")  # active, error, expired, pending
-    connected_at = Column(DateTime, nullable=True)
-    last_synced = Column(DateTime, nullable=True)
-    access_token = Column(String, nullable=True)
-    refresh_token = Column(String, nullable=True)
-    token_expiry = Column(DateTime, nullable=True)
-    account_name = Column(String, nullable=True)
-    account_id = Column(String, nullable=True)
-    scopes = Column(JSON, default=lambda: [])
-    config = Column(JSON, default=lambda: {})  # Extra config per integration type
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-# Create the table
-try:
-    Base.metadata.create_all(bind=engine)
-except Exception as e:
-    print(f"Integration table creation: {e}")
-
-# --- Router ---
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
-
 
 INTEGRATION_DEFINITIONS = {
     "google_search_console": {
@@ -76,12 +49,7 @@ INTEGRATION_DEFINITIONS = {
 
 @router.get("/{website_id}/status")
 async def get_integration_status(website_id: int, db: Session = Depends(get_db)):
-    """Get the status of all integrations for a website, including which are connected."""
-    # Get connected integrations from DB
-    connected = db.query(Integration).filter(
-        Integration.website_id == website_id
-    ).all()
-
+    connected = db.query(Integration).filter(Integration.website_id == website_id).all()
     connected_map = {i.integration_type: i for i in connected}
 
     integrations = []
@@ -106,7 +74,6 @@ async def get_integration_status(website_id: int, db: Session = Depends(get_db))
 
 @router.get("/{website_id}/connected")
 async def get_connected_integrations(website_id: int, db: Session = Depends(get_db)):
-    """Get only the connected integrations for settings view."""
     connected = db.query(Integration).filter(
         Integration.website_id == website_id,
         Integration.status.in_(["active", "error", "expired"])
@@ -130,12 +97,7 @@ async def get_connected_integrations(website_id: int, db: Session = Depends(get_
 
 
 @router.post("/{website_id}/connect")
-async def connect_integration(
-    website_id: int,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """Initiate connection to an integration platform."""
+async def connect_integration(website_id: int, request: Request, db: Session = Depends(get_db)):
     data = await request.json()
     integration_id = data.get("integration_id")
 
@@ -144,13 +106,11 @@ async def connect_integration(
 
     definition = INTEGRATION_DEFINITIONS[integration_id]
 
-    # Handle Google OAuth integrations
     if integration_id in ["google_search_console", "google_analytics"]:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/integrations/oauth/google/callback")
 
         if not client_id:
-            # For development: simulate a successful connection
             existing = db.query(Integration).filter(
                 Integration.website_id == website_id,
                 Integration.integration_type == integration_id
@@ -176,7 +136,6 @@ async def connect_integration(
             db.commit()
             return {"connected": True, "message": f"{definition['name']} connected (demo mode)"}
 
-        # Real OAuth flow
         state = secrets.token_urlsafe(32)
         scopes = " ".join(definition.get("scopes", []))
         auth_url = (
@@ -191,7 +150,6 @@ async def connect_integration(
         )
         return {"authorization_url": auth_url}
 
-    # Handle Shopify integration
     elif integration_id == "shopify":
         shopify_store_url = data.get("shopify_store_url")
         shopify_access_token = data.get("shopify_access_token")
@@ -225,7 +183,6 @@ async def connect_integration(
         db.commit()
         return {"connected": True, "message": "Shopify connected"}
 
-    # Handle WordPress integration
     elif integration_id == "wordpress":
         wp_url = data.get("wordpress_url")
         wp_api_key = data.get("api_key")
@@ -260,12 +217,7 @@ async def connect_integration(
 
 
 @router.post("/{website_id}/disconnect")
-async def disconnect_integration(
-    website_id: int,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """Disconnect an integration. Preserves historical data."""
+async def disconnect_integration(website_id: int, request: Request, db: Session = Depends(get_db)):
     data = await request.json()
     integration_id = data.get("integration_id")
 
@@ -277,20 +229,13 @@ async def disconnect_integration(
     if not record:
         raise HTTPException(status_code=404, detail="Integration not found")
 
-    # Remove the record (historical audit data from this integration is preserved)
     db.delete(record)
     db.commit()
-
     return {"disconnected": True, "message": f"{integration_id} disconnected"}
 
 
 @router.post("/{website_id}/sync")
-async def sync_integration(
-    website_id: int,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """Trigger a manual sync for an integration."""
+async def sync_integration(website_id: int, request: Request, db: Session = Depends(get_db)):
     data = await request.json()
     integration_id = data.get("integration_id")
 
@@ -305,28 +250,17 @@ async def sync_integration(
     if record.status != "active":
         raise HTTPException(status_code=400, detail="Integration is not active. Please reconnect.")
 
-    # TODO: Trigger actual sync logic based on integration type
-    # For now, just update last_synced
     record.last_synced = datetime.utcnow()
     db.commit()
-
     return {"synced": True, "message": f"{integration_id} sync initiated"}
 
 
-# --- Google OAuth Callback ---
 @router.get("/oauth/google/callback")
-async def google_oauth_callback(
-    code: str,
-    state: str,
-    db: Session = Depends(get_db)
-):
-    """Handle Google OAuth callback after user authorizes."""
+async def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
     import httpx
 
-    # Parse state to get website_id and integration_type
     try:
         parts = state.split("_")
-        # state format: {random}_{website_id}_{integration_type}
         website_id = int(parts[-2])
         integration_type = parts[-1]
     except (ValueError, IndexError):
@@ -336,7 +270,6 @@ async def google_oauth_callback(
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
     redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/integrations/oauth/google/callback")
 
-    # Exchange code for tokens
     async with httpx.AsyncClient() as client:
         token_response = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -355,9 +288,7 @@ async def google_oauth_callback(
     tokens = token_response.json()
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
-    expires_in = tokens.get("expires_in", 3600)
 
-    # Get user info for account_name
     account_name = "Google Account"
     try:
         async with httpx.AsyncClient() as client:
@@ -371,7 +302,6 @@ async def google_oauth_callback(
     except Exception:
         pass
 
-    # Save to database
     definition = INTEGRATION_DEFINITIONS.get(integration_type, {})
     existing = db.query(Integration).filter(
         Integration.website_id == website_id,
@@ -404,7 +334,6 @@ async def google_oauth_callback(
 
     db.commit()
 
-    # Return HTML that closes the popup and notifies the parent window
     return HTMLResponse(content="""
     <html>
     <body>
