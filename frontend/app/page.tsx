@@ -1,24 +1,24 @@
+// frontend/app/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
+import {
   Search, TrendingUp, Brain, Zap, Globe, ShoppingCart, Bot,
   CheckCircle, XCircle, AlertCircle, Settings, Link2,
   BarChart3, Calendar, Users, FileSearch, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity
 } from 'lucide-react';
-import IntegrationsModal from '@/components/IntegrationsModal';
 import OptimizationQueue from '@/components/OptimizationQueue';
 import ErrorMonitor from '@/components/ErrorMonitor';
 import ContentCalendar from '@/components/ContentCalendar';
 import CompetitorAnalysis from '@/components/CompetitorAnalysis';
 import AuditDashboard from '@/components/AuditDashboard';
 import WebsiteManager from '@/components/WebsiteManager';
+import SettingsPanel from '@/components/SettingsPanel';
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview');
-  const [showIntegrations, setShowIntegrations] = useState(false);
   const [selectedWebsite, setSelectedWebsite] = useState<number>(1);
   const [aiStatus, setAiStatus] = useState({ status: 'active', message: 'Analyzing rankings...' });
   const [stats, setStats] = useState({
@@ -76,9 +76,10 @@ export default function Dashboard() {
                 <p className="text-purple-300 text-sm">AI-Powered Autonomous Optimization</p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-6">
-              <motion.div 
+              {/* AI Status indicator */}
+              <motion.div
                 className="flex items-center gap-3 bg-white/10 backdrop-blur-md rounded-full px-4 py-2"
                 animate={{ scale: [1, 1.02, 1] }}
                 transition={{ duration: 2, repeat: Infinity }}
@@ -93,12 +94,16 @@ export default function Dashboard() {
                 </div>
               </motion.div>
 
+              {/* Settings button (replaces old Integrations button) */}
               <button
-                onClick={() => setShowIntegrations(true)}
-                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg hover:shadow-purple-500/25 transition-all duration-300 flex items-center gap-2"
+                onClick={() => setActiveTab('settings')}
+                className={`p-2 rounded-lg transition-all ${
+                  activeTab === 'settings'
+                    ? 'bg-purple-500 text-white'
+                    : 'bg-white/10 text-gray-400 hover:text-white hover:bg-white/20'
+                }`}
               >
-                <Link2 className="w-4 h-4" />
-                Integrations
+                <Settings className="w-5 h-5" />
               </button>
             </div>
           </div>
@@ -141,53 +146,128 @@ export default function Dashboard() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="grid grid-cols-1 md:grid-cols-4 gap-4"
+              className="space-y-6"
             >
-              <motion.div
-                whileHover={{ scale: 1.02 }}
-                className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-purple-300 text-sm font-medium">Keywords Tracked</p>
-                    <p className="text-3xl font-bold text-white mt-2">{stats.keywords.toLocaleString()}</p>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[
+                  { label: 'Keywords Tracked', value: stats.keywords.toLocaleString(), icon: Search, color: 'text-purple-400' },
+                  { label: 'Top 10 Rankings', value: stats.topTen.toString(), icon: TrendingUp, color: 'text-green-400' },
+                  { label: 'Avg. Position', value: stats.avgPosition.toString(), icon: Target, color: 'text-yellow-400' },
+                  { label: 'AI Visibility', value: `${stats.aiVisibility}%`, icon: Brain, color: 'text-blue-400' },
+                ].map((stat) => (
+                  <motion.div
+                    key={stat.label}
+                    whileHover={{ scale: 1.02 }}
+                    className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-purple-300 text-sm font-medium">{stat.label}</p>
+                        <p className="text-3xl font-bold text-white mt-2">{stat.value}</p>
+                      </div>
+                      <stat.icon className={`w-6 h-6 ${stat.color}`} />
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <motion.div
+                  whileHover={{ scale: 1.02 }}
+                  className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Sparkles className="w-5 h-5 text-yellow-400" />
+                    <p className="text-white font-medium">Pending Optimizations</p>
                   </div>
-                  <Search className="w-6 h-6 text-purple-400" />
-                </div>
-              </motion.div>
+                  <p className="text-3xl font-bold text-white">{stats.pendingOptimizations}</p>
+                  <p className="text-gray-400 text-sm mt-1">AI-suggested improvements</p>
+                </motion.div>
+
+                <motion.div
+                  whileHover={{ scale: 1.02 }}
+                  className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Zap className="w-5 h-5 text-green-400" />
+                    <p className="text-white font-medium">Auto-Fixed Errors</p>
+                  </div>
+                  <p className="text-3xl font-bold text-white">{stats.autoFixedErrors}</p>
+                  <p className="text-gray-400 text-sm mt-1">Fixed this week</p>
+                </motion.div>
+
+                <motion.div
+                  whileHover={{ scale: 1.02 }}
+                  className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Calendar className="w-5 h-5 text-blue-400" />
+                    <p className="text-white font-medium">Scheduled Content</p>
+                  </div>
+                  <p className="text-3xl font-bold text-white">{stats.scheduledContent}</p>
+                  <p className="text-gray-400 text-sm mt-1">Posts queued</p>
+                </motion.div>
+              </div>
             </motion.div>
           )}
 
           {activeTab === 'websites' && (
-            <WebsiteManager />
+            <motion.div key="websites" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <WebsiteManager />
+            </motion.div>
           )}
 
           {activeTab === 'audit' && (
-            <AuditDashboard websiteId={selectedWebsite} />
+            <motion.div key="audit" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <AuditDashboard websiteId={selectedWebsite} />
+            </motion.div>
           )}
 
           {activeTab === 'optimizations' && (
-            <OptimizationQueue websiteId={selectedWebsite} />
+            <motion.div key="optimizations" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <OptimizationQueue websiteId={selectedWebsite} />
+            </motion.div>
           )}
 
           {activeTab === 'errors' && (
-            <ErrorMonitor websiteId={selectedWebsite} />
+            <motion.div key="errors" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <ErrorMonitor websiteId={selectedWebsite} />
+            </motion.div>
           )}
 
           {activeTab === 'content' && (
-            <ContentCalendar websiteId={selectedWebsite} />
+            <motion.div key="content" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <ContentCalendar websiteId={selectedWebsite} />
+            </motion.div>
           )}
 
           {activeTab === 'competitors' && (
-            <CompetitorAnalysis websiteId={selectedWebsite} />
+            <motion.div key="competitors" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <CompetitorAnalysis websiteId={selectedWebsite} />
+            </motion.div>
+          )}
+
+          {activeTab === 'ai-search' && (
+            <motion.div key="ai-search" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+                <div className="flex items-center gap-3 mb-4">
+                  <Brain className="w-6 h-6 text-purple-400" />
+                  <h2 className="text-xl font-bold text-white">AI Search Optimization</h2>
+                </div>
+                <p className="text-purple-300">
+                  Track how your site appears in AI-generated search results (ChatGPT, Perplexity, Google AI Overviews). Coming soon.
+                </p>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'settings' && (
+            <motion.div key="settings" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <SettingsPanel websiteId={selectedWebsite} />
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
-
-      {/* Integrations Modal */}
-      {showIntegrations && (
-        <IntegrationsModal onClose={() => setShowIntegrations(false)} />
-      )}
     </div>
   );
 }
