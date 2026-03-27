@@ -23,4 +23,3 @@ RUN mkdir -p /app/screenshots /app/temp
 
 # Add the command to run your app
 CMD ["python", "main.py"]
-```
