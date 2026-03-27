@@ -1,7 +1,7 @@
 # backend/main.py - Complete SEO Intelligence Platform Backend
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any, Literal
 from datetime import datetime, timedelta
@@ -43,9 +43,8 @@ try:
     if "postgresql" in DATABASE_URL:
         engine = create_engine(DATABASE_URL)
     else:
-        # SQLite fallback for local testing
         engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-    
+
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base = declarative_base()
     print(f"Database connection initialized: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
@@ -66,21 +65,21 @@ def get_db():
 # --- Database Models ---
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, default="user@example.com")
     name = Column(String, default="Default User")
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     websites = relationship("Website", back_populates="owner", cascade="all, delete-orphan")
 
 class Website(Base):
     __tablename__ = "websites"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), default=1)
     domain = Column(String, unique=True, index=True, nullable=False)
-    site_type = Column(String, default="custom")  # shopify, wordpress, custom
+    site_type = Column(String, default="custom")
     shopify_store_url = Column(String, nullable=True)
     shopify_access_token = Column(String, nullable=True)
     monthly_traffic = Column(Integer, nullable=True)
@@ -89,14 +88,13 @@ class Website(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 
-    # Relationships
     owner = relationship("User", back_populates="websites")
     audits = relationship("AuditReport", back_populates="website", cascade="all, delete-orphan")
     content_items = relationship("ContentItem", back_populates="website", cascade="all, delete-orphan")
 
 class AuditReport(Base):
     __tablename__ = "audit_reports"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     website_id = Column(Integer, ForeignKey("websites.id"))
     audit_date = Column(DateTime, default=datetime.utcnow)
@@ -106,21 +104,17 @@ class AuditReport(Base):
     performance_score = Column(Float, default=0)
     mobile_score = Column(Float, default=0)
     security_score = Column(Float, default=0)
-    
-    # Issue summary
     total_issues = Column(Integer, default=0)
     critical_issues = Column(Integer, default=0)
     errors = Column(Integer, default=0)
     warnings = Column(Integer, default=0)
-    
-    # JSON field for detailed findings
     detailed_findings = Column(JSON, default=lambda: {"issues": [], "recommendations": []})
 
     website = relationship("Website", back_populates="audits")
 
 class ContentItem(Base):
     __tablename__ = "content_calendar"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     website_id = Column(Integer, ForeignKey("websites.id"))
     title = Column(String, nullable=False)
@@ -139,14 +133,9 @@ Base.metadata.create_all(bind=engine)
 def init_db():
     db = SessionLocal()
     try:
-        # Check if default user exists
         user = db.query(User).filter(User.id == 1).first()
         if not user:
-            default_user = User(
-                id=1,
-                email="user@example.com",
-                name="Default User"
-            )
+            default_user = User(id=1, email="user@example.com", name="Default User")
             db.add(default_user)
             db.commit()
             print("Default user created")
@@ -156,7 +145,6 @@ def init_db():
     finally:
         db.close()
 
-# Initialize database on startup
 init_db()
 
 # --- Pydantic Schemas ---
@@ -168,46 +156,18 @@ class WebsiteCreate(BaseModel):
     shopify_access_token: Optional[str] = None
     monthly_traffic: Optional[int] = None
 
-class AuditReportSummary(BaseModel):
-    health_score: float
-    technical_score: float
-    content_score: float
-    performance_score: float
-    mobile_score: float
-    security_score: float
-    total_issues: int
-    critical_issues: int
-    errors: int
-    warnings: int
-    audit_date: datetime
-
-class ContentItemModel(BaseModel):
-    id: int
-    website_id: int
-    title: str
-    content_type: str
-    publish_date: datetime
-    status: str
-    keywords_target: List[str]
-    ai_generated_content: Optional[str] = None
-    
-    class Config:
-        from_attributes = True
-
 # --- Core API Endpoints ---
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     try:
-        # Test database connection
         db = SessionLocal()
         db.execute(text("SELECT 1"))
         db.close()
         db_status = "connected"
     except:
         db_status = "disconnected"
-    
+
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
@@ -217,10 +177,9 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
     return {"message": "SEO Intelligence Platform API", "version": "1.0.0"}
 
-# --- Website Management Endpoints ---
+# --- Website Management ---
 
 @app.post("/websites")
 async def create_website(
@@ -228,24 +187,17 @@ async def create_website(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Create a new website"""
     try:
         data = await request.json()
-        print(f"Creating website with data: {data}")
-        
-        # Validate required fields
         if not data.get('domain'):
             raise HTTPException(status_code=400, detail="Domain is required")
-        
-        # Clean domain (remove http/https if present)
+
         domain = data['domain'].replace('http://', '').replace('https://', '').replace('/', '')
-        
-        # Check if domain already exists
+
         existing = db.query(Website).filter(Website.domain == domain).first()
         if existing:
             raise HTTPException(status_code=400, detail="Domain already registered")
-        
-        # Create website
+
         website = Website(
             user_id=data.get('user_id', 1),
             domain=domain,
@@ -254,110 +206,84 @@ async def create_website(
             shopify_access_token=data.get('shopify_access_token'),
             monthly_traffic=data.get('monthly_traffic')
         )
-        
+
         db.add(website)
         db.commit()
         db.refresh(website)
-        
-        print(f"Website created successfully: {website.domain}")
-        
-        # Trigger initial audit (if audit_engine exists)
+
         try:
             from audit_engine import SEOAuditEngine
             background_tasks.add_task(SEOAuditEngine(website.id).run_comprehensive_audit)
         except ImportError:
             print("Audit engine not available, skipping initial audit")
-        
+
         return {
             "id": website.id,
             "domain": website.domain,
             "site_type": website.site_type,
             "created_at": website.created_at.isoformat() if website.created_at else None
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error creating website: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @app.get("/websites")
-async def get_websites(
-    user_id: Optional[int] = None,
-    db: Session = Depends(get_db)
-):
-    """Get all websites"""
+async def get_websites(user_id: Optional[int] = None, db: Session = Depends(get_db)):
     try:
         query = db.query(Website)
         if user_id:
             query = query.filter(Website.user_id == user_id)
-        
+
         websites = query.all()
-        
-        # Build response with health scores from latest audits
         result = []
         for w in websites:
-            # Get latest audit for health score
             latest_audit = db.query(AuditReport)\
                 .filter(AuditReport.website_id == w.id)\
                 .order_by(AuditReport.audit_date.desc())\
                 .first()
-            
-            health_score = latest_audit.health_score if latest_audit else None
-            
+
             result.append({
                 "id": w.id,
                 "domain": w.domain,
                 "site_type": w.site_type,
                 "monthly_traffic": w.monthly_traffic,
-                "health_score": health_score,
+                "health_score": latest_audit.health_score if latest_audit else None,
                 "created_at": w.created_at.isoformat() if w.created_at else None
             })
-        
+
         return result
     except Exception as e:
         print(f"Error fetching websites: {e}")
         return []
 
 @app.delete("/websites/{website_id}")
-async def delete_website(
-    website_id: int,
-    db: Session = Depends(get_db)
-):
-    """Delete a website"""
+async def delete_website(website_id: int, db: Session = Depends(get_db)):
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
-    
     db.delete(website)
     db.commit()
     return {"message": "Website deleted successfully"}
 
 @app.put("/websites/{website_id}")
-async def update_website(
-    website_id: int,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """Update a website"""
+async def update_website(website_id: int, request: Request, db: Session = Depends(get_db)):
     data = await request.json()
     website = db.query(Website).filter(Website.id == website_id).first()
-    
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
-    
-    # Update fields if provided
+
     if 'domain' in data:
         website.domain = data['domain']
     if 'monthly_traffic' in data:
         website.monthly_traffic = data['monthly_traffic']
     if 'site_type' in data:
         website.site_type = data['site_type']
-    
+
     db.commit()
     db.refresh(website)
-    
     return {
         "id": website.id,
         "domain": website.domain,
@@ -365,44 +291,23 @@ async def update_website(
         "monthly_traffic": website.monthly_traffic
     }
 
-# --- API Endpoints (for backward compatibility) ---
-
-@app.post("/api/websites")
-async def api_register_website(
-    new_website: WebsiteCreate, 
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """API endpoint for registering website"""
-    request_data = new_website.dict()
-    request = Request(scope={"type": "http"})
-    request._json = request_data
-    return await create_website(request, background_tasks, db)
-
-@app.get("/api/websites")
-async def api_get_websites(db: Session = Depends(get_db)):
-    """API endpoint for getting websites"""
-    return await get_websites(None, db)
-
 # --- Audit Endpoints ---
 
 @app.post("/api/audit/{website_id}/start")
 async def start_new_audit(
-    website_id: int, 
-    background_tasks: BackgroundTasks, 
+    website_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Start a new audit for a website"""
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
-    
+
     try:
         from audit_engine import SEOAuditEngine
         background_tasks.add_task(SEOAuditEngine(website_id).run_comprehensive_audit)
         return {"status": "success", "message": f"Audit initiated for {website.domain}"}
     except ImportError:
-        # Create a mock audit if audit_engine doesn't exist
         mock_audit = AuditReport(
             website_id=website_id,
             health_score=75 + (website_id % 20),
@@ -422,14 +327,12 @@ async def start_new_audit(
 
 @app.get("/api/audit/{website_id}")
 async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)):
-    """Get the latest audit report for a website"""
     latest_report = db.query(AuditReport)\
         .filter(AuditReport.website_id == website_id)\
         .order_by(AuditReport.audit_date.desc())\
         .first()
 
     if not latest_report:
-        # Return mock data if no audit exists
         return {
             "audit": {
                 "id": 0,
@@ -480,15 +383,13 @@ async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)
         "recommendations": findings.get("recommendations", [])
     }
 
-# --- Content Calendar Endpoints ---
+# --- Content Calendar ---
 
 @app.get("/api/content-calendar/{website_id}")
 async def get_content_calendar(website_id: int, db: Session = Depends(get_db)):
-    """Get content calendar for a website"""
     content_items = db.query(ContentItem).filter(ContentItem.website_id == website_id).all()
-    
+
     if not content_items:
-        # Return mock data
         return [
             {
                 "id": i+1,
@@ -501,7 +402,7 @@ async def get_content_calendar(website_id: int, db: Session = Depends(get_db)):
                 "ai_generated_content": f"This is sample content for post {i+1}..."
             } for i in range(3)
         ]
-    
+
     return [
         {
             "id": item.id,
@@ -517,13 +418,11 @@ async def get_content_calendar(website_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/content-calendar/{website_id}/generate")
 async def generate_content_calendar(
-    website_id: int, 
+    website_id: int,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Generate content calendar using AI"""
     async def create_sample_content():
-        # Create sample content items
         for i in range(3):
             content = ContentItem(
                 website_id=website_id,
@@ -536,16 +435,14 @@ async def generate_content_calendar(
             )
             db.add(content)
         db.commit()
-    
+
     background_tasks.add_task(create_sample_content)
     return {"status": "success", "message": "Content generation initiated"}
 
-# --- Error Monitoring Endpoints ---
+# --- Error Monitoring ---
 
 @app.get("/api/errors/{website_id}")
 async def get_errors(website_id: int, db: Session = Depends(get_db)):
-    """Get errors for a website"""
-    # Mock error data
     return [
         {
             "id": 1,
@@ -565,49 +462,38 @@ async def get_errors(website_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/errors/{error_id}/fix")
 async def fix_error(error_id: int):
-    """Auto-fix an error"""
-    await asyncio.sleep(1)  # Simulate work
+    await asyncio.sleep(1)
     return {"status": "success", "message": f"Error {error_id} fixed"}
 
-# --- Competitor Analysis Endpoints ---
+# --- Competitor Analysis ---
 
 @app.post("/api/competitors/{website_id}/analyze")
-async def analyze_competitors(
-    website_id: int, 
-    background_tasks: BackgroundTasks
-):
-    """Analyze competitors"""
+async def analyze_competitors(website_id: int, background_tasks: BackgroundTasks):
     async def mock_analysis():
         await asyncio.sleep(2)
-        print(f"Competitor analysis complete for website {website_id}")
-    
     background_tasks.add_task(mock_analysis)
     return {"status": "success", "message": "Competitor analysis initiated"}
 
-# --- Google Integration Endpoints ---
+# --- Google Integration (legacy, kept for backward compat) ---
 
 @app.get("/auth/google/init")
-async def init_google_auth(
-    user_id: int = 1, 
-    integration_type: str = "search_console"
-):
-    """Initialize Google OAuth"""
-    # This would redirect to Google OAuth in production
+async def init_google_auth(user_id: int = 1, integration_type: str = "search_console"):
     return {
         "authorization_url": f"https://accounts.google.com/oauth/authorize?client_id=xxx&redirect_uri=xxx&scope={integration_type}"
     }
 
-# --- Startup Events ---
+# --- Include Integration Router ---
+from integrations import router as integrations_router
+app.include_router(integrations_router)
+
+# --- Startup ---
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event handler"""
     print(f"Starting SEO Intelligence Platform on port {os.getenv('PORT', 8000)}")
-    
-    # Auto-migrate database schema
+
     try:
         with engine.connect() as conn:
-            # Add any missing columns
             if "postgresql" in DATABASE_URL or "sqlite" in DATABASE_URL:
                 migrations = [
                     "ALTER TABLE websites ADD COLUMN IF NOT EXISTS user_id INTEGER DEFAULT 1",
@@ -616,19 +502,17 @@ async def startup_event():
                     "ALTER TABLE websites ADD COLUMN IF NOT EXISTS shopify_access_token VARCHAR",
                     "ALTER TABLE websites ADD COLUMN IF NOT EXISTS monthly_traffic INTEGER"
                 ]
-                
                 for migration in migrations:
                     try:
                         conn.execute(text(migration))
                         conn.commit()
                     except:
-                        pass  # Column might already exist
-                        
+                        pass
         print("Database schema updated")
     except Exception as e:
         print(f"Migration skipped: {e}")
 
-# --- Main Execution ---
+# --- Main ---
 
 if __name__ == "__main__":
     import uvicorn
