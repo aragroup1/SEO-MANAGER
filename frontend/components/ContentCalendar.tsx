@@ -12,13 +12,13 @@ export default function ContentCalendar({ websiteId }: { websiteId: number }) {
   }, [websiteId]);
 
   const fetchContent = async () => {
-    const response = await fetch(`/api/content-calendar/${websiteId}`);
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/content-calendar/${websiteId}`);
     const data = await response.json();
     setContent(data);
   };
 
   const generateCalendar = async () => {
-    await fetch(`/api/content-calendar/${websiteId}/generate`, { method: 'POST' });
+   await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/content-calendar/${websiteId}/generate`, { method: 'POST' });
     fetchContent();
   };
 
