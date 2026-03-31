@@ -10,7 +10,7 @@ export default function CompetitorAnalysis({ websiteId }: { websiteId: number })
 
   const analyzeCompetitors = async () => {
     setAnalyzing(true);
-    await fetch(`/api/competitors/${websiteId}/analyze`, {
+    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/competitors/${websiteId}/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
