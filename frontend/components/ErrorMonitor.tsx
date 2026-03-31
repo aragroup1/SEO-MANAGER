@@ -14,13 +14,13 @@ export default function ErrorMonitor({ websiteId }: { websiteId: number }) {
   }, [websiteId]);
 
   const fetchErrors = async () => {
-    const response = await fetch(`/api/errors/${websiteId}`);
+   const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/errors/${websiteId}`);
     const data = await response.json();
     setErrors(data);
   };
 
   const fixError = async (errorId: number) => {
-    await fetch(`/api/errors/${errorId}/fix`, { method: 'POST' });
+   await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/errors/${errorId}/fix`, { method: 'POST' });
     fetchErrors();
   };
 
