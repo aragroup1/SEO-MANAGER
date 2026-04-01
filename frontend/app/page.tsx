@@ -9,7 +9,7 @@ import {
   BarChart3, Calendar, Users, FileSearch, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity
 } from 'lucide-react';
-import OptimizationQueue from '@/components/OptimizationQueue';
+import ApprovalQueue from '@/components/ApprovalQueue';
 import ErrorMonitor from '@/components/ErrorMonitor';
 import ContentCalendar from '@/components/ContentCalendar';
 import CompetitorAnalysis from '@/components/CompetitorAnalysis';
@@ -117,7 +117,7 @@ export default function Dashboard() {
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'websites', label: 'Websites', icon: Globe },
             { id: 'audit', label: 'Site Audit', icon: Activity },
-            { id: 'optimizations', label: 'Optimizations', icon: Sparkles },
+            { id: 'optimizations', label: 'Auto-Fix', icon: Sparkles },
             { id: 'errors', label: 'Error Monitor', icon: Shield },
             { id: 'content', label: 'Content Calendar', icon: Calendar },
             { id: 'competitors', label: 'Competitors', icon: Users },
@@ -225,7 +225,7 @@ export default function Dashboard() {
 
           {activeTab === 'optimizations' && (
             <motion.div key="optimizations" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
-              <OptimizationQueue websiteId={selectedWebsite} />
+              <ApprovalQueue websiteId={selectedWebsite} />
             </motion.div>
           )}
 
