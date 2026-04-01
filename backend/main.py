@@ -18,7 +18,7 @@ load_dotenv()
 # Import shared database objects
 from database import (
     Base, engine, SessionLocal, get_db, DATABASE_URL,
-    User, Website, AuditReport, ContentItem, Integration
+    User, Website, AuditReport, ContentItem, Integration, ProposedFix
 )
 
 app = FastAPI(title="SEO Intelligence Platform")
@@ -123,9 +123,18 @@ async def delete_website(website_id: int, db: Session = Depends(get_db)):
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
-    db.delete(website)
-    db.commit()
-    return {"message": "Website deleted successfully"}
+    try:
+        # Manually delete related records that might not have cascade set in DB
+        db.query(Integration).filter(Integration.website_id == website_id).delete()
+        db.query(ProposedFix).filter(ProposedFix.website_id == website_id).delete()
+        db.query(AuditReport).filter(AuditReport.website_id == website_id).delete()
+        db.query(ContentItem).filter(ContentItem.website_id == website_id).delete()
+        db.delete(website)
+        db.commit()
+        return {"message": "Website deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting website: {str(e)}")
 
 @app.put("/websites/{website_id}")
 async def update_website(website_id: int, request: Request, db: Session = Depends(get_db)):
