@@ -124,7 +124,7 @@ async def delete_website(website_id: int, db: Session = Depends(get_db)):
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
     try:
-        # Manually delete related records that might not have cascade set in DB
+        # Manually delete related records to avoid FK constraint errors
         db.query(Integration).filter(Integration.website_id == website_id).delete()
         db.query(ProposedFix).filter(ProposedFix.website_id == website_id).delete()
         db.query(AuditReport).filter(AuditReport.website_id == website_id).delete()
