@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 load_dotenv()
 
-# Import shared database objects — NO models defined here
+# Import shared database objects
 from database import (
     Base, engine, SessionLocal, get_db, DATABASE_URL,
     User, Website, AuditReport, ContentItem, Integration
@@ -66,7 +66,7 @@ async def create_website(request: Request, background_tasks: BackgroundTasks, db
         if not data.get('domain'):
             raise HTTPException(status_code=400, detail="Domain is required")
 
-        domain = data['domain'].replace('http://', '').replace('https://', '').replace('/', '')
+        domain = data['domain'].replace('http://', '').replace('https://', '').rstrip('/')
 
         existing = db.query(Website).filter(Website.domain == domain).first()
         if existing:
@@ -84,11 +84,8 @@ async def create_website(request: Request, background_tasks: BackgroundTasks, db
         db.commit()
         db.refresh(website)
 
-        try:
-            from audit_engine import SEOAuditEngine
-            background_tasks.add_task(SEOAuditEngine(website.id).run_comprehensive_audit)
-        except ImportError:
-            print("Audit engine not available, skipping initial audit")
+        # Trigger initial audit in the background
+        background_tasks.add_task(_run_audit_task, website.id)
 
         return {
             "id": website.id, "domain": website.domain, "site_type": website.site_type,
@@ -143,61 +140,127 @@ async def update_website(website_id: int, request: Request, db: Session = Depend
     db.refresh(website)
     return {"id": website.id, "domain": website.domain, "site_type": website.site_type, "monthly_traffic": website.monthly_traffic}
 
+# --- Audit Background Task ---
+
+async def _run_audit_async(website_id: int):
+    """Run the audit engine asynchronously."""
+    from audit_engine import SEOAuditEngine
+    audit_engine = SEOAuditEngine(website_id)
+    return await audit_engine.run_comprehensive_audit()
+
+def _run_audit_task(website_id: int):
+    """Background task wrapper that runs the async audit."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(_run_audit_async(website_id))
+        loop.close()
+        print(f"[Background] Audit completed for website {website_id}: score {result.get('health_score', 'N/A')}")
+    except Exception as e:
+        print(f"[Background] Audit failed for website {website_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
 # --- Audit Endpoints ---
 
 @app.post("/api/audit/{website_id}/start")
 async def start_new_audit(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Start a new SEO audit for a website."""
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
-    try:
-        from audit_engine import SEOAuditEngine
-        background_tasks.add_task(SEOAuditEngine(website_id).run_comprehensive_audit)
-        return {"status": "success", "message": f"Audit initiated for {website.domain}"}
-    except ImportError:
-        mock_audit = AuditReport(
-            website_id=website_id, health_score=75+(website_id%20), technical_score=80+(website_id%15),
-            content_score=70+(website_id%25), performance_score=85+(website_id%10),
-            mobile_score=90+(website_id%5), security_score=95-(website_id%10),
-            total_issues=10+(website_id%15), critical_issues=1+(website_id%3),
-            errors=2+(website_id%5), warnings=3+(website_id%7)
-        )
-        db.add(mock_audit)
-        db.commit()
-        return {"status": "success", "message": f"Mock audit created for {website.domain}"}
+
+    background_tasks.add_task(_run_audit_task, website_id)
+    return {
+        "status": "success",
+        "message": f"Audit started for {website.domain}. Results will appear in 10-30 seconds."
+    }
 
 @app.get("/api/audit/{website_id}")
 async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)):
-    latest_report = db.query(AuditReport).filter(AuditReport.website_id == website_id).order_by(AuditReport.audit_date.desc()).first()
+    """Get the latest audit report for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    latest_report = db.query(AuditReport)\
+        .filter(AuditReport.website_id == website_id)\
+        .order_by(AuditReport.audit_date.desc())\
+        .first()
+
+    # Get previous report for score comparison
+    previous_report = None
+    if latest_report:
+        previous_report = db.query(AuditReport)\
+            .filter(AuditReport.website_id == website_id)\
+            .filter(AuditReport.id != latest_report.id)\
+            .order_by(AuditReport.audit_date.desc())\
+            .first()
 
     if not latest_report:
         return {
-            "audit": {
-                "id": 0, "health_score": 78, "previous_score": 75, "score_change": 3,
-                "technical_score": 82, "content_score": 76, "performance_score": 71,
-                "mobile_score": 85, "security_score": 90, "total_issues": 23,
-                "critical_issues": 2, "errors": 5, "warnings": 10, "notices": 6,
-                "new_issues": 3, "fixed_issues": 7, "audit_date": datetime.utcnow().isoformat()
-            },
-            "issues": [], "recommendations": []
+            "audit": None,
+            "issues": [],
+            "recommendations": [],
+            "message": "No audit has been run yet. Click 'Run New Audit' to start your first SEO analysis."
         }
 
+    previous_score = previous_report.health_score if previous_report else latest_report.health_score
+    score_change = round(latest_report.health_score - previous_score, 1)
+
     findings = latest_report.detailed_findings or {"issues": [], "recommendations": []}
+
     return {
         "audit": {
-            "id": latest_report.id, "health_score": latest_report.health_score,
-            "previous_score": latest_report.health_score - 3, "score_change": 3,
-            "technical_score": latest_report.technical_score, "content_score": latest_report.content_score,
-            "performance_score": latest_report.performance_score, "mobile_score": latest_report.mobile_score,
-            "security_score": latest_report.security_score, "total_issues": latest_report.total_issues,
-            "critical_issues": latest_report.critical_issues, "errors": latest_report.errors,
+            "id": latest_report.id,
+            "health_score": latest_report.health_score,
+            "previous_score": previous_score,
+            "score_change": score_change,
+            "technical_score": latest_report.technical_score,
+            "content_score": latest_report.content_score,
+            "performance_score": latest_report.performance_score,
+            "mobile_score": latest_report.mobile_score,
+            "security_score": latest_report.security_score,
+            "total_issues": latest_report.total_issues,
+            "critical_issues": latest_report.critical_issues,
+            "errors": latest_report.errors,
             "warnings": latest_report.warnings,
             "notices": latest_report.total_issues - latest_report.critical_issues - latest_report.errors - latest_report.warnings,
-            "new_issues": 0, "fixed_issues": 0, "audit_date": latest_report.audit_date.isoformat()
+            "new_issues": 0,
+            "fixed_issues": 0,
+            "audit_date": latest_report.audit_date.isoformat(),
+            "domain": website.domain
         },
         "issues": findings.get("issues", []),
         "recommendations": findings.get("recommendations", [])
     }
+
+@app.get("/api/audit/{website_id}/history")
+async def get_audit_history(website_id: int, limit: int = 10, db: Session = Depends(get_db)):
+    """Get audit history for a website."""
+    reports = db.query(AuditReport)\
+        .filter(AuditReport.website_id == website_id)\
+        .order_by(AuditReport.audit_date.desc())\
+        .limit(limit)\
+        .all()
+
+    return [
+        {
+            "id": r.id,
+            "health_score": r.health_score,
+            "technical_score": r.technical_score,
+            "content_score": r.content_score,
+            "performance_score": r.performance_score,
+            "mobile_score": r.mobile_score,
+            "security_score": r.security_score,
+            "total_issues": r.total_issues,
+            "critical_issues": r.critical_issues,
+            "errors": r.errors,
+            "warnings": r.warnings,
+            "audit_date": r.audit_date.isoformat()
+        }
+        for r in reports
+    ]
 
 # --- Content Calendar ---
 
@@ -205,13 +268,7 @@ async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)
 async def get_content_calendar(website_id: int, db: Session = Depends(get_db)):
     content_items = db.query(ContentItem).filter(ContentItem.website_id == website_id).all()
     if not content_items:
-        return [
-            {"id": i+1, "website_id": website_id, "title": f"SEO Best Practices Guide Part {i+1}",
-             "content_type": "Blog Post", "publish_date": (datetime.utcnow() + timedelta(days=i*7)).isoformat(),
-             "status": "Scheduled", "keywords_target": ["SEO", "optimization", "ranking"],
-             "ai_generated_content": f"This is sample content for post {i+1}..."}
-            for i in range(3)
-        ]
+        return []
     return [
         {"id": item.id, "website_id": item.website_id, "title": item.title, "content_type": item.content_type,
          "publish_date": item.publish_date.isoformat() if item.publish_date else None,
@@ -235,19 +292,39 @@ async def generate_content_calendar(website_id: int, background_tasks: Backgroun
     background_tasks.add_task(create_sample_content)
     return {"status": "success", "message": "Content generation initiated"}
 
-# --- Error Monitoring ---
+# --- Error Monitoring (pulls from real audit data) ---
 
 @app.get("/api/errors/{website_id}")
 async def get_errors(website_id: int, db: Session = Depends(get_db)):
+    """Get errors from the latest audit."""
+    latest_report = db.query(AuditReport)\
+        .filter(AuditReport.website_id == website_id)\
+        .order_by(AuditReport.audit_date.desc())\
+        .first()
+
+    if not latest_report or not latest_report.detailed_findings:
+        return []
+
+    issues = latest_report.detailed_findings.get("issues", [])
+
     return [
-        {"id": 1, "title": "Missing Meta Description", "severity": "error", "page": "/products", "auto_fixed": False},
-        {"id": 2, "title": "Slow Page Load Time", "severity": "warning", "page": "/", "auto_fixed": True}
+        {
+            "id": issue.get("id", i+1),
+            "title": issue.get("title", issue.get("issue_type", "Unknown")),
+            "severity": issue.get("severity", "Warning").lower(),
+            "description": issue.get("how_to_fix", ""),
+            "page": issue.get("affected_pages", ["/"])[0] if issue.get("affected_pages") else "/",
+            "category": issue.get("category", "Technical"),
+            "auto_fixed": False,
+            "affected_urls": issue.get("affected_pages", []),
+        }
+        for i, issue in enumerate(issues)
     ]
 
 @app.post("/api/errors/{error_id}/fix")
 async def fix_error(error_id: int):
     await asyncio.sleep(1)
-    return {"status": "success", "message": f"Error {error_id} fixed"}
+    return {"status": "success", "message": f"Error {error_id} fix initiated"}
 
 # --- Competitor Analysis ---
 
@@ -264,7 +341,7 @@ async def analyze_competitors(website_id: int, background_tasks: BackgroundTasks
 async def init_google_auth(user_id: int = 1, integration_type: str = "search_console"):
     return {"authorization_url": f"https://accounts.google.com/oauth/authorize?client_id=xxx&redirect_uri=xxx&scope={integration_type}"}
 
-# --- Include Integration Router (imports from database.py, no circular import) ---
+# --- Include Integration Router ---
 from integrations import router as integrations_router
 app.include_router(integrations_router)
 
