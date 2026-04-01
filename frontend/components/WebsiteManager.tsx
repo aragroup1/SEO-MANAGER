@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Globe, Plus, Trash2, Edit, ExternalLink, 
   ShoppingCart, Code, Layers, CheckCircle,
-  Settings, TrendingUp, AlertCircle, Loader2
+  Settings, TrendingUp, AlertCircle, Loader2, Activity
 } from 'lucide-react';
 
 interface Website {
@@ -18,10 +18,16 @@ interface Website {
   created_at: string;
 }
 
-export default function WebsiteManager() {
+interface Props {
+  onSelectWebsite?: (websiteId: number) => void;
+  onWebsitesChange?: () => void;
+}
+
+export default function WebsiteManager({ onSelectWebsite, onWebsitesChange }: Props) {
   const [websites, setWebsites] = useState<Website[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
   const [formData, setFormData] = useState({
     domain: '',
     site_type: 'custom',
@@ -29,90 +35,87 @@ export default function WebsiteManager() {
     shopify_access_token: ''
   });
 
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
   useEffect(() => {
     fetchWebsites();
   }, []);
 
   const fetchWebsites = async () => {
+    setFetching(true);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/websites`);
-      const data = await response.json();
-      setWebsites(Array.isArray(data) ? data : []);
+      const response = await fetch(`${API_URL}/websites`);
+      if (response.ok) {
+        const data = await response.json();
+        setWebsites(Array.isArray(data) ? data : []);
+      }
     } catch (error) {
       console.error('Error fetching websites:', error);
-      setWebsites([]);
+    } finally {
+      setFetching(false);
     }
   };
 
-// frontend/components/WebsiteManager.tsx - Fix the error handling
-
-const addWebsite = async () => {
-  if (!formData.domain) {
-    alert('Please enter a domain');
-    return;
-  }
-
-  setLoading(true);
-  try {
-    console.log('Sending request to:', `${process.env.NEXT_PUBLIC_API_URL}/websites`);
-    console.log('Request data:', { ...formData, user_id: 1 });
-    
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/websites`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ...formData,
-        user_id: 1
-      })
-    });
-    
-    const data = await response.json();
-    console.log('Response:', response.status, data);
-    
-    if (response.ok) {
-      await fetchWebsites();
-      setShowAddModal(false);
-      setFormData({ domain: '', site_type: 'custom', shopify_store_url: '', shopify_access_token: '' });
-      alert('Website added successfully!');
-    } else {
-      // Show the actual error from backend
-      alert(`Failed to add website: ${data.detail || JSON.stringify(data)}`);
+  const addWebsite = async () => {
+    if (!formData.domain) {
+      alert('Please enter a domain');
+      return;
     }
-  } catch (error) {
-    console.error('Error adding website:', error);
-    // Fix TypeScript error by checking error type
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    alert(`Connection error: ${errorMessage}. Check console for details.`);
-  } finally {
-    setLoading(false);
-  }
-};
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/websites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...formData, user_id: 1 })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        await fetchWebsites();
+        onWebsitesChange?.();
+        setShowAddModal(false);
+        setFormData({ domain: '', site_type: 'custom', shopify_store_url: '', shopify_access_token: '' });
+      } else {
+        alert(`Failed to add website: ${data.detail || JSON.stringify(data)}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Connection error: ${errorMessage}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const deleteWebsite = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this website?')) return;
-    
+    if (!confirm('Are you sure you want to delete this website? All audits and data will be removed.')) return;
+
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/websites/${id}`, {
-        method: 'DELETE'
-      });
-      await fetchWebsites();
+      const response = await fetch(`${API_URL}/websites/${id}`, { method: 'DELETE' });
+      if (response.ok) {
+        await fetchWebsites();
+        onWebsitesChange?.();
+      } else {
+        const data = await response.json();
+        alert(`Failed to delete: ${data.detail || 'Unknown error'}`);
+      }
     } catch (error) {
       console.error('Error deleting website:', error);
+      alert('Failed to delete website. Check console for details.');
     }
   };
 
   const getSiteIcon = (type: string) => {
     switch (type) {
-      case 'shopify': return <ShoppingCart className="w-5 h-5" />;
-      case 'wordpress': return <Layers className="w-5 h-5" />;
-      default: return <Code className="w-5 h-5" />;
+      case 'shopify': return <ShoppingCart className="w-5 h-5 text-green-400" />;
+      case 'wordpress': return <Layers className="w-5 h-5 text-blue-400" />;
+      default: return <Code className="w-5 h-5 text-purple-400" />;
     }
   };
 
   const getHealthColor = (score?: number) => {
-    if (!score) return 'text-gray-400';
+    if (!score) return 'text-gray-500';
     if (score >= 80) return 'text-green-400';
     if (score >= 60) return 'text-yellow-400';
     if (score >= 40) return 'text-orange-400';
@@ -125,7 +128,9 @@ const addWebsite = async () => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white">Website Management</h2>
-          <p className="text-purple-300 mt-1">Manage and monitor all your websites in one place</p>
+          <p className="text-purple-300 mt-1">
+            {websites.length} website{websites.length !== 1 ? 's' : ''} registered
+          </p>
         </div>
         <motion.button
           whileHover={{ scale: 1.05 }}
@@ -138,6 +143,13 @@ const addWebsite = async () => {
         </motion.button>
       </div>
 
+      {/* Loading state */}
+      {fetching && websites.length === 0 && (
+        <div className="flex items-center justify-center h-40">
+          <Loader2 className="w-8 h-8 text-purple-400 animate-spin" />
+        </div>
+      )}
+
       {/* Websites Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {websites.map((website) => (
@@ -149,24 +161,26 @@ const addWebsite = async () => {
           >
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-purple-500/20 rounded-lg">
+                <div className="p-2 bg-white/10 rounded-lg">
                   {getSiteIcon(website.site_type)}
                 </div>
                 <div>
                   <h3 className="text-white font-semibold">{website.domain}</h3>
-                  <p className="text-purple-300 text-sm capitalize">{website.site_type}</p>
+                  <p className="text-gray-400 text-sm capitalize">{website.site_type}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <button 
-                  className="text-gray-400 hover:text-white transition-colors"
+                  className="text-gray-400 hover:text-white transition-colors p-1"
                   onClick={() => window.open(`https://${website.domain}`, '_blank')}
+                  title="Open website"
                 >
                   <ExternalLink className="w-4 h-4" />
                 </button>
                 <button 
-                  className="text-gray-400 hover:text-red-400 transition-colors"
+                  className="text-gray-400 hover:text-red-400 transition-colors p-1"
                   onClick={() => deleteWebsite(website.id)}
+                  title="Delete website"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -176,14 +190,8 @@ const addWebsite = async () => {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-gray-400 text-sm">Health Score</span>
-                <span className={`font-bold ${getHealthColor(website.health_score)}`}>
-                  {website.health_score || '--'}%
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-400 text-sm">Monthly Traffic</span>
-                <span className="text-white font-medium">
-                  {website.monthly_traffic?.toLocaleString() || '--'}
+                <span className={`text-xl font-bold ${getHealthColor(website.health_score)}`}>
+                  {website.health_score ? `${Math.round(website.health_score)}` : '--'}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -196,29 +204,38 @@ const addWebsite = async () => {
             </div>
 
             <div className="mt-4 pt-4 border-t border-white/10 flex gap-2">
-              <button className="flex-1 bg-purple-500/20 text-purple-400 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-purple-500/30 transition-all">
-                Dashboard
+              <button
+                onClick={() => onSelectWebsite?.(website.id)}
+                className="flex-1 bg-purple-500/20 text-purple-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-purple-500/30 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                View Audit
               </button>
-              <button className="flex-1 bg-white/10 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-white/20 transition-all">
-                Settings
+              <button
+                onClick={() => window.open(`https://${website.domain}`, '_blank')}
+                className="bg-white/10 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/20 transition-all"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
               </button>
             </div>
           </motion.div>
         ))}
 
         {/* Add Website Card */}
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => setShowAddModal(true)}
-          className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/10 transition-all flex flex-col items-center justify-center min-h-[280px] border-dashed"
-        >
-          <div className="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mb-4">
-            <Plus className="w-8 h-8 text-purple-400" />
-          </div>
-          <p className="text-white font-medium">Add New Website</p>
-          <p className="text-purple-300 text-sm mt-1">Connect your website to start tracking</p>
-        </motion.button>
+        {!fetching && (
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setShowAddModal(true)}
+            className="bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/20 hover:bg-white/10 transition-all flex flex-col items-center justify-center min-h-[240px] border-dashed"
+          >
+            <div className="w-14 h-14 bg-purple-500/20 rounded-full flex items-center justify-center mb-3">
+              <Plus className="w-7 h-7 text-purple-400" />
+            </div>
+            <p className="text-white font-medium">Add New Website</p>
+            <p className="text-purple-300 text-sm mt-1">Start tracking SEO</p>
+          </motion.button>
+        )}
       </div>
 
       {/* Add Website Modal */}
@@ -242,9 +259,7 @@ const addWebsite = async () => {
               
               <div className="space-y-4">
                 <div>
-                  <label className="block text-purple-300 text-sm font-medium mb-2">
-                    Website Domain
-                  </label>
+                  <label className="block text-purple-300 text-sm font-medium mb-2">Website Domain</label>
                   <input
                     type="text"
                     placeholder="example.com"
@@ -255,9 +270,7 @@ const addWebsite = async () => {
                 </div>
 
                 <div>
-                  <label className="block text-purple-300 text-sm font-medium mb-2">
-                    Platform Type
-                  </label>
+                  <label className="block text-purple-300 text-sm font-medium mb-2">Platform Type</label>
                   <select
                     value={formData.site_type}
                     onChange={(e) => setFormData({ ...formData, site_type: e.target.value })}
@@ -272,9 +285,7 @@ const addWebsite = async () => {
                 {formData.site_type === 'shopify' && (
                   <>
                     <div>
-                      <label className="block text-purple-300 text-sm font-medium mb-2">
-                        Shopify Store URL
-                      </label>
+                      <label className="block text-purple-300 text-sm font-medium mb-2">Shopify Store URL</label>
                       <input
                         type="text"
                         placeholder="mystore.myshopify.com"
@@ -284,9 +295,7 @@ const addWebsite = async () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-purple-300 text-sm font-medium mb-2">
-                        Access Token (Optional)
-                      </label>
+                      <label className="block text-purple-300 text-sm font-medium mb-2">Access Token</label>
                       <input
                         type="password"
                         placeholder="shpat_xxxxx"
@@ -294,6 +303,7 @@ const addWebsite = async () => {
                         onChange={(e) => setFormData({ ...formData, shopify_access_token: e.target.value })}
                         className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-purple-500"
                       />
+                      <p className="text-gray-500 text-xs mt-1">Required for auto-fix features. Get this from your Shopify Admin → Apps → Develop apps.</p>
                     </div>
                   </>
                 )}
@@ -312,15 +322,9 @@ const addWebsite = async () => {
                   className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg hover:shadow-purple-500/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {loading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Adding...
-                    </>
+                    <><Loader2 className="w-4 h-4 animate-spin" />Adding...</>
                   ) : (
-                    <>
-                      <Plus className="w-4 h-4" />
-                      Add Website
-                    </>
+                    <><Plus className="w-4 h-4" />Add Website</>
                   )}
                 </button>
               </div>
