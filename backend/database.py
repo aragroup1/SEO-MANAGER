@@ -60,6 +60,7 @@ class Website(Base):
     owner = relationship("User", back_populates="websites")
     audits = relationship("AuditReport", back_populates="website", cascade="all, delete-orphan")
     content_items = relationship("ContentItem", back_populates="website", cascade="all, delete-orphan")
+    proposed_fixes = relationship("ProposedFix", back_populates="website", cascade="all, delete-orphan")
 
 class AuditReport(Base):
     __tablename__ = "audit_reports"
@@ -107,6 +108,49 @@ class Integration(Base):
     scopes = Column(JSON, default=lambda: [])
     config = Column(JSON, default=lambda: {})
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ProposedFix(Base):
+    """
+    Stores AI-generated fixes that need user approval before being applied.
+    Each fix represents a single change to a single resource (product, page, etc.)
+    """
+    __tablename__ = "proposed_fixes"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
+    audit_report_id = Column(Integer, nullable=True)  # Which audit triggered this fix
+
+    # What type of fix
+    fix_type = Column(String, nullable=False)
+    # Types: alt_text, meta_title, meta_description, broken_link, structured_data, canonical, viewport
+
+    # What platform resource this applies to
+    platform = Column(String, nullable=False)  # shopify, wordpress, custom
+    resource_type = Column(String, nullable=False)  # product, page, blog_post, collection, image
+    resource_id = Column(String, nullable=True)  # Platform-specific ID (e.g. Shopify product ID)
+    resource_url = Column(String, nullable=True)  # URL of the affected page
+    resource_title = Column(String, nullable=True)  # Human-readable name
+
+    # The actual fix content
+    field_name = Column(String, nullable=False)  # Which field to change (e.g. "alt", "meta_title")
+    current_value = Column(Text, nullable=True)  # What it is now (can be null/empty)
+    proposed_value = Column(Text, nullable=False)  # What AI suggests
+    ai_reasoning = Column(Text, nullable=True)  # Why the AI chose this
+
+    # Status workflow: pending -> approved/rejected -> applied/failed
+    status = Column(String, default="pending")
+    # pending, approved, rejected, applied, failed
+
+    # Metadata
+    severity = Column(String, default="medium")  # critical, high, medium, low
+    category = Column(String, default="content")  # content, technical, accessibility
+    batch_id = Column(String, nullable=True)  # Group related fixes together
+    error_message = Column(Text, nullable=True)  # If application failed, why
+    applied_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    website = relationship("Website", back_populates="proposed_fixes")
+
 
 # Create all tables
 Base.metadata.create_all(bind=engine)
