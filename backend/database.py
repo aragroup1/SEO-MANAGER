@@ -61,6 +61,7 @@ class Website(Base):
     audits = relationship("AuditReport", back_populates="website", cascade="all, delete-orphan")
     content_items = relationship("ContentItem", back_populates="website", cascade="all, delete-orphan")
     proposed_fixes = relationship("ProposedFix", back_populates="website", cascade="all, delete-orphan")
+    integrations = relationship("Integration", back_populates="website", cascade="all, delete-orphan")
 
 class AuditReport(Base):
     __tablename__ = "audit_reports"
