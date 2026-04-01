@@ -109,6 +109,7 @@ class Integration(Base):
     scopes = Column(JSON, default=lambda: [])
     config = Column(JSON, default=lambda: {})
     created_at = Column(DateTime, default=datetime.utcnow)
+    website = relationship("Website", back_populates="integrations")
 
 class ProposedFix(Base):
     """
