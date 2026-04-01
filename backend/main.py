@@ -341,9 +341,12 @@ async def analyze_competitors(website_id: int, background_tasks: BackgroundTasks
 async def init_google_auth(user_id: int = 1, integration_type: str = "search_console"):
     return {"authorization_url": f"https://accounts.google.com/oauth/authorize?client_id=xxx&redirect_uri=xxx&scope={integration_type}"}
 
-# --- Include Integration Router ---
+# --- Include Routers ---
 from integrations import router as integrations_router
 app.include_router(integrations_router)
+
+from fix_routes import router as fix_router
+app.include_router(fix_router)
 
 # --- Startup ---
 
