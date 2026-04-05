@@ -144,7 +144,7 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
             f"&redirect_uri={redirect_uri}"
             f"&response_type=code"
             f"&scope={scopes}"
-            f"&state={state}_{website_id}_{integration_id}"
+            f"&state={state}|{website_id}|{integration_id}"
             f"&access_type=offline"
             f"&prompt=consent"
         )
@@ -260,9 +260,11 @@ async def google_oauth_callback(code: str, state: str, db: Session = Depends(get
     import httpx
 
     try:
-        parts = state.split("_")
-        website_id = int(parts[-2])
-        integration_type = parts[-1]
+        parts = state.split("|")
+        if len(parts) != 3:
+            raise ValueError("Expected 3 parts")
+        website_id = int(parts[1])
+        integration_type = parts[2]
     except (ValueError, IndexError):
         raise HTTPException(status_code=400, detail="Invalid state parameter")
 
