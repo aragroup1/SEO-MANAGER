@@ -6,8 +6,10 @@ from datetime import datetime
 from typing import Optional, List, Dict
 import os
 import secrets
+import hashlib
+import hmac
 
-from database import SessionLocal, get_db, Integration
+from database import SessionLocal, get_db, Integration, Website
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
@@ -34,7 +36,7 @@ INTEGRATION_DEFINITIONS = {
         "required": True,
         "relevantFor": ["shopify"],
         "dataProvided": "Product data, collection structure, meta fields",
-        "scopes": ["read_products", "read_content", "read_themes"]
+        "scopes": ["read_products", "write_products", "read_content", "write_content"]
     },
     "wordpress": {
         "name": "WordPress",
@@ -106,6 +108,7 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
 
     definition = INTEGRATION_DEFINITIONS[integration_id]
 
+    # ─── Google OAuth (Search Console / GA4) ───
     if integration_id in ["google_search_console", "google_analytics"]:
         client_id = os.getenv("GOOGLE_CLIENT_ID")
         redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/integrations/oauth/google/callback")
@@ -150,42 +153,79 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
         )
         return {"authorization_url": auth_url}
 
+    # ─── Shopify OAuth ───
     elif integration_id == "shopify":
-        shopify_store_url = data.get("shopify_store_url")
-        shopify_access_token = data.get("shopify_access_token")
+        shopify_client_id = os.getenv("SHOPIFY_CLIENT_ID")
+        shopify_redirect_uri = os.getenv(
+            "SHOPIFY_REDIRECT_URI",
+            "https://backend-production-6104.up.railway.app/api/integrations/oauth/shopify/callback"
+        )
 
-        existing = db.query(Integration).filter(
-            Integration.website_id == website_id,
-            Integration.integration_type == "shopify"
-        ).first()
+        # Get the shop domain from the request or from the website record
+        shop_domain = data.get("shop_domain", "")
 
-        if existing:
-            existing.status = "active"
-            existing.connected_at = datetime.utcnow()
-            existing.last_synced = datetime.utcnow()
-            existing.access_token = shopify_access_token
-            existing.account_name = shopify_store_url
-            existing.config = {"store_url": shopify_store_url}
-        else:
-            new_integration = Integration(
-                website_id=website_id,
-                integration_type="shopify",
-                status="active",
-                connected_at=datetime.utcnow(),
-                last_synced=datetime.utcnow(),
-                access_token=shopify_access_token,
-                account_name=shopify_store_url,
-                config={"store_url": shopify_store_url},
-                scopes=definition.get("scopes", [])
-            )
-            db.add(new_integration)
+        if not shop_domain:
+            website = db.query(Website).filter(Website.id == website_id).first()
+            if website:
+                shop_domain = website.shopify_store_url or website.domain
+            if not shop_domain:
+                return {
+                    "needs_shop_domain": True,
+                    "message": "Please provide your myshopify.com store URL to connect Shopify."
+                }
 
-        db.commit()
-        return {"connected": True, "message": "Shopify connected"}
+        # Normalize shop domain
+        shop_domain = shop_domain.replace("https://", "").replace("http://", "").rstrip("/")
+        if not shop_domain.endswith(".myshopify.com"):
+            shop_domain = shop_domain + ".myshopify.com"
 
+        if not shopify_client_id:
+            # Demo mode
+            existing = db.query(Integration).filter(
+                Integration.website_id == website_id,
+                Integration.integration_type == "shopify"
+            ).first()
+
+            if existing:
+                existing.status = "active"
+                existing.connected_at = datetime.utcnow()
+                existing.last_synced = datetime.utcnow()
+                existing.account_name = shop_domain
+            else:
+                new_integration = Integration(
+                    website_id=website_id,
+                    integration_type="shopify",
+                    status="active",
+                    connected_at=datetime.utcnow(),
+                    last_synced=datetime.utcnow(),
+                    account_name=shop_domain,
+                    config={"store_url": shop_domain, "shop_domain": shop_domain},
+                    scopes=definition.get("scopes", [])
+                )
+                db.add(new_integration)
+
+            db.commit()
+            return {"connected": True, "message": "Shopify connected (demo mode)"}
+
+        # Real Shopify OAuth flow
+        scopes = ",".join(definition.get("scopes", []))
+        state = secrets.token_urlsafe(32)
+        state_value = f"{state}|{website_id}|{shop_domain}"
+
+        auth_url = (
+            f"https://{shop_domain}/admin/oauth/authorize"
+            f"?client_id={shopify_client_id}"
+            f"&scope={scopes}"
+            f"&redirect_uri={shopify_redirect_uri}"
+            f"&state={state_value}"
+        )
+        return {"authorization_url": auth_url}
+
+    # ─── WordPress (app password based) ───
     elif integration_id == "wordpress":
         wp_url = data.get("wordpress_url")
-        wp_api_key = data.get("api_key")
+        wp_username = data.get("username", "")
+        wp_app_password = data.get("app_password", "")
 
         existing = db.query(Integration).filter(
             Integration.website_id == website_id,
@@ -196,7 +236,8 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
             existing.status = "active"
             existing.connected_at = datetime.utcnow()
             existing.account_name = wp_url
-            existing.config = {"wp_url": wp_url}
+            existing.access_token = wp_app_password
+            existing.config = {"wp_url": wp_url, "username": wp_username}
         else:
             new_integration = Integration(
                 website_id=website_id,
@@ -204,8 +245,8 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
                 status="active",
                 connected_at=datetime.utcnow(),
                 account_name=wp_url,
-                access_token=wp_api_key,
-                config={"wp_url": wp_url},
+                access_token=wp_app_password,
+                config={"wp_url": wp_url, "username": wp_username},
                 scopes=[]
             )
             db.add(new_integration)
@@ -255,6 +296,9 @@ async def sync_integration(website_id: int, request: Request, db: Session = Depe
     return {"synced": True, "message": f"{integration_id} sync initiated"}
 
 
+# ─────────────────────────────────────────────────
+#  Google OAuth Callback
+# ─────────────────────────────────────────────────
 @router.get("/oauth/google/callback")
 async def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
     import httpx
@@ -344,6 +388,132 @@ async def google_oauth_callback(code: str, state: str, db: Session = Depends(get
             window.close();
         </script>
         <p>Connected successfully! This window will close automatically.</p>
+    </body>
+    </html>
+    """)
+
+
+# ─────────────────────────────────────────────────
+#  Shopify OAuth Callback
+# ─────────────────────────────────────────────────
+@router.get("/oauth/shopify/callback")
+async def shopify_oauth_callback(
+    code: str,
+    state: str,
+    shop: str,
+    hmac: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Handle Shopify OAuth callback — exchange code for offline access token."""
+    import httpx
+
+    # Parse state to get website_id and shop_domain
+    try:
+        parts = state.split("|")
+        if len(parts) != 3:
+            raise ValueError("Expected 3 parts in state")
+        website_id = int(parts[1])
+        shop_domain = parts[2]
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=400, detail="Invalid state parameter")
+
+    shopify_client_id = os.getenv("SHOPIFY_CLIENT_ID")
+    shopify_client_secret = os.getenv("SHOPIFY_CLIENT_SECRET")
+
+    if not shopify_client_id or not shopify_client_secret:
+        raise HTTPException(status_code=500, detail="Shopify OAuth credentials not configured")
+
+    # Exchange the authorization code for an offline access token
+    token_url = f"https://{shop}/admin/oauth/access_token"
+
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(
+            token_url,
+            json={
+                "client_id": shopify_client_id,
+                "client_secret": shopify_client_secret,
+                "code": code
+            }
+        )
+
+    if token_response.status_code != 200:
+        print(f"[Shopify OAuth] Token exchange failed: {token_response.status_code} {token_response.text[:500]}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to get Shopify access token: {token_response.text[:200]}"
+        )
+
+    token_data = token_response.json()
+    access_token = token_data.get("access_token")
+    granted_scopes = token_data.get("scope", "")
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="No access token in Shopify response")
+
+    print(f"[Shopify OAuth] Got access token for {shop}, scopes: {granted_scopes}")
+
+    # Get shop info for display name
+    shop_name = shop
+    try:
+        async with httpx.AsyncClient() as client:
+            shop_response = await client.get(
+                f"https://{shop}/admin/api/2024-01/shop.json",
+                headers={"X-Shopify-Access-Token": access_token}
+            )
+            if shop_response.status_code == 200:
+                shop_data = shop_response.json()
+                shop_name = shop_data.get("shop", {}).get("name", shop)
+    except Exception as e:
+        print(f"[Shopify OAuth] Could not fetch shop info: {e}")
+
+    # Save to database
+    existing = db.query(Integration).filter(
+        Integration.website_id == website_id,
+        Integration.integration_type == "shopify"
+    ).first()
+
+    if existing:
+        existing.status = "active"
+        existing.access_token = access_token
+        existing.connected_at = datetime.utcnow()
+        existing.last_synced = datetime.utcnow()
+        existing.account_name = shop_name
+        existing.scopes = granted_scopes.split(",") if granted_scopes else []
+        existing.config = {"store_url": shop, "shop_domain": shop_domain}
+    else:
+        new_integration = Integration(
+            website_id=website_id,
+            integration_type="shopify",
+            status="active",
+            access_token=access_token,
+            connected_at=datetime.utcnow(),
+            last_synced=datetime.utcnow(),
+            account_name=shop_name,
+            scopes=granted_scopes.split(",") if granted_scopes else [],
+            config={"store_url": shop, "shop_domain": shop_domain}
+        )
+        db.add(new_integration)
+
+    # Also update the website record so the fix engine can find credentials
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if website:
+        website.shopify_store_url = shop
+        website.shopify_access_token = access_token
+
+    db.commit()
+
+    return HTMLResponse(content="""
+    <html>
+    <body style="font-family: system-ui; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #1a1a2e; color: white;">
+        <div style="text-align: center;">
+            <div style="font-size: 48px; margin-bottom: 16px;">&#10004;</div>
+            <h2>Shopify Connected!</h2>
+            <p style="color: #a0a0a0;">This window will close automatically...</p>
+        </div>
+        <script>
+            window.opener && window.opener.postMessage('integration_connected', '*');
+            setTimeout(() => window.close(), 2000);
+        </script>
     </body>
     </html>
     """)
