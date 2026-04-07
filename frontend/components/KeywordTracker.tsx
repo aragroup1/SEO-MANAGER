@@ -75,6 +75,7 @@ function getFlag(code: string) { return COUNTRY_FLAGS[code] || '🌍'; }
 export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [trackedKeywords, setTrackedKeywords] = useState<TrackedKW[]>([]);
+  const [snapshotHistory, setSnapshotHistory] = useState<{date: string; keywords: number; clicks: number; impressions: number; position: number}[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -84,11 +85,19 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [positionFilter, setPositionFilter] = useState('all');
   const [showTracked, setShowTracked] = useState(true);
   const [trackingInProgress, setTrackingInProgress] = useState<string | null>(null);
+  const [subTab, setSubTab] = useState<'rankings' | 'research'>('rankings');
 
   // Detail panel
   const [selectedKeyword, setSelectedKeyword] = useState<Keyword | null>(null);
   const [keywordHistory, setKeywordHistory] = useState<HistoryPoint[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Keyword research
+  const [researchSeed, setResearchSeed] = useState('');
+  const [researchCountry, setResearchCountry] = useState('GB');
+  const [researchNiche, setResearchNiche] = useState('');
+  const [researchResults, setResearchResults] = useState<any[]>([]);
+  const [researching, setResearching] = useState(false);
 
   const snapshotIdAtSync = useRef<number | null>(null);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
@@ -97,12 +106,15 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   useEffect(() => {
     setSnapshot(null);
     setTrackedKeywords([]);
+    setSnapshotHistory([]);
     setLoading(true);
     setSyncing(false);
     setError('');
     setSearchQuery('');
     setSelectedKeyword(null);
     setKeywordHistory([]);
+    setResearchResults([]);
+    setSubTab('rankings');
     snapshotIdAtSync.current = null;
 
     fetch(`${API_URL}/api/keywords/${websiteId}`)
@@ -117,6 +129,23 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
     fetch(`${API_URL}/api/keywords/${websiteId}/tracked`)
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.tracked) setTrackedKeywords(data.tracked); })
+      .catch(() => {});
+
+    // Fetch snapshot history for trend chart
+    fetch(`${API_URL}/api/keywords/${websiteId}/history?limit=20`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.snapshots) {
+          const history = data.snapshots.reverse().map((s: any) => ({
+            date: s.date_to,
+            keywords: s.total_keywords,
+            clicks: s.total_clicks,
+            impressions: s.total_impressions,
+            position: s.avg_position,
+          }));
+          setSnapshotHistory(history);
+        }
+      })
       .catch(() => {});
   }, [websiteId, API_URL]);
 
@@ -194,6 +223,39 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   };
 
   const isTracked = (q: string) => trackedKeywords.some(t => t.keyword === q.toLowerCase());
+
+  // Reset keyword data (clear wrong property)
+  const resetKeywordData = async () => {
+    if (!confirm('Clear all keyword data and reset GSC property for this website?')) return;
+    try {
+      await fetch(`${API_URL}/api/keywords/${websiteId}/reset`, { method: 'POST' });
+      setSnapshot(null);
+      setTrackedKeywords([]);
+      setError('');
+    } catch {}
+  };
+
+  // Keyword research
+  const runResearch = async () => {
+    if (!researchSeed.trim()) return;
+    setResearching(true);
+    setResearchResults([]);
+    try {
+      const r = await fetch(`${API_URL}/api/keywords/${websiteId}/research`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seed_keyword: researchSeed, country: researchCountry, niche: researchNiche })
+      });
+      if (r.ok) {
+        const data = await r.json();
+        setResearchResults(data.keywords || []);
+      }
+    } catch (err) {
+      console.error('Research error:', err);
+    } finally {
+      setResearching(false);
+    }
+  };
 
   // ─── Filter + sort ───
   const filteredKeywords = useMemo(() => {
@@ -310,14 +372,119 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
             {snapshot.date_from} to {snapshot.date_to}
           </p>
         </div>
-        <button onClick={syncKeywords} disabled={syncing}
-          className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
-          {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          {syncing ? 'Syncing...' : 'Refresh Data'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={resetKeywordData}
+            className="bg-white/10 text-gray-300 px-3 py-2 rounded-lg text-sm hover:bg-white/20 transition-all flex items-center gap-1.5"
+            title="Reset GSC property and clear data">
+            <Trash2 className="w-3.5 h-3.5" /> Reset
+          </button>
+          <button onClick={syncKeywords} disabled={syncing}
+            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
+            {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {syncing ? 'Syncing...' : 'Refresh Data'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3"><p className="text-red-400 text-sm flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {error}</p></div>}
+
+      {/* Sub-tabs */}
+      <div className="flex gap-2">
+        <button onClick={() => setSubTab('rankings')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${subTab === 'rankings' ? 'bg-purple-500/30 text-white border border-purple-500/50' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
+          Rankings
+        </button>
+        <button onClick={() => setSubTab('research')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${subTab === 'research' ? 'bg-purple-500/30 text-white border border-purple-500/50' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
+          Keyword Research
+        </button>
+      </div>
+
+      {subTab === 'research' && (
+        <div className="space-y-4">
+          {/* Research Input */}
+          <div className="bg-white/10 backdrop-blur-md rounded-xl p-5 border border-white/20">
+            <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><Search className="w-5 h-5 text-purple-400" /> Keyword Research</h3>
+            <p className="text-gray-400 text-sm mb-4">Enter a seed keyword to discover related terms with search volume and difficulty estimates.</p>
+            <div className="flex gap-3 flex-wrap">
+              <input type="text" placeholder="e.g. canvas wall art, barcode generator..." value={researchSeed} onChange={e => setResearchSeed(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && runResearch()}
+                className="flex-1 min-w-[250px] bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500" />
+              <select value={researchCountry} onChange={e => setResearchCountry(e.target.value)}
+                className="bg-white/10 text-white border border-white/20 rounded-lg px-3 py-2.5 text-sm">
+                <option value="GB">🇬🇧 UK</option><option value="US">🇺🇸 US</option><option value="CA">🇨🇦 CA</option>
+                <option value="AU">🇦🇺 AU</option><option value="DE">🇩🇪 DE</option><option value="IN">🇮🇳 IN</option>
+              </select>
+              <input type="text" placeholder="Niche (optional)" value={researchNiche} onChange={e => setResearchNiche(e.target.value)}
+                className="w-40 bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-purple-500" />
+              <button onClick={runResearch} disabled={researching || !researchSeed.trim()}
+                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-5 py-2.5 rounded-lg font-medium hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2">
+                {researching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                {researching ? 'Researching...' : 'Research'}
+              </button>
+            </div>
+          </div>
+
+          {/* Research Results */}
+          {researchResults.length > 0 && (
+            <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden">
+              <div className="grid grid-cols-12 gap-2 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400">
+                <div className="col-span-1"></div>
+                <div className="col-span-4">Keyword</div>
+                <div className="col-span-2 text-right">Volume</div>
+                <div className="col-span-2 text-center">Difficulty</div>
+                <div className="col-span-1 text-right">CPC</div>
+                <div className="col-span-2 text-center">Score</div>
+              </div>
+              <div className="max-h-[500px] overflow-y-auto">
+                {researchResults.map((kw: any, idx: number) => (
+                  <div key={kw.keyword + idx} className="grid grid-cols-12 gap-2 px-4 py-2.5 border-b border-white/5 hover:bg-white/5 items-center">
+                    <div className="col-span-1">
+                      <button onClick={() => trackKeyword({ query: kw.keyword, clicks: 0, impressions: 0, ctr: 0, position: 0 })}
+                        disabled={isTracked(kw.keyword)}
+                        className={`p-1 rounded transition-all ${isTracked(kw.keyword) ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}>
+                        <Star className={`w-4 h-4 ${isTracked(kw.keyword) ? 'fill-yellow-400' : ''}`} />
+                      </button>
+                    </div>
+                    <div className="col-span-4 min-w-0">
+                      <p className="text-white text-sm truncate">{kw.keyword}</p>
+                      <p className="text-gray-600 text-xs">{kw.intent} · {kw.category}</p>
+                    </div>
+                    <div className="col-span-2 text-right">
+                      <span className="text-blue-400 text-sm font-medium">{(kw.search_volume || 0).toLocaleString()}</span>
+                      <p className="text-gray-600 text-[10px]">/month</p>
+                    </div>
+                    <div className="col-span-2 text-center">
+                      <div className="inline-flex items-center gap-1.5">
+                        <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${(kw.difficulty || 0) <= 30 ? 'bg-green-500' : (kw.difficulty || 0) <= 60 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                            style={{ width: `${kw.difficulty || 0}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-400">{kw.difficulty || 0}</span>
+                      </div>
+                      <p className="text-gray-600 text-[10px]">{kw.difficulty_label}</p>
+                    </div>
+                    <div className="col-span-1 text-right">
+                      <span className="text-green-400 text-sm">${(kw.cpc || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="col-span-2 text-center">
+                      <div className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${
+                        (kw.opportunity_score || 0) >= 70 ? 'bg-green-500/20 text-green-400' :
+                        (kw.opportunity_score || 0) >= 40 ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-red-500/20 text-red-400'
+                      }`}>
+                        {kw.opportunity_score || 0}/100
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {subTab === 'rankings' && (<>
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -464,6 +631,25 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           {filteredKeywords.length > 200 && <div className="text-center py-3 border-t border-white/10"><p className="text-gray-500 text-xs">Showing top 200 of {filteredKeywords.length}</p></div>}
         </div>
       </div>
+
+      </>)}
+
+      {/* Keyword Trend Chart (show on rankings tab, after table) */}
+      {subTab === 'rankings' && snapshotHistory.length > 1 && (
+        <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
+          <h3 className="text-white font-medium mb-3 text-sm">Keyword Ranking Trend</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white/5 rounded-lg p-3">
+              <p className="text-xs text-gray-400 mb-2">Total Keywords Ranking</p>
+              <HistoryChart data={snapshotHistory.map(s => ({ date: s.date, clicks: s.keywords, impressions: 0, ctr: 0, position: 0 }))} metric="clicks" />
+            </div>
+            <div className="bg-white/5 rounded-lg p-3">
+              <p className="text-xs text-gray-400 mb-2">Total Clicks</p>
+              <HistoryChart data={snapshotHistory.map(s => ({ date: s.date, clicks: s.clicks, impressions: 0, ctr: 0, position: 0 }))} metric="clicks" />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Keyword Detail Panel (slide-over) */}
       <AnimatePresence>
