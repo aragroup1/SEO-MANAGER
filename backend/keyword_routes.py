@@ -179,3 +179,65 @@ async def untrack_keyword(website_id: int, keyword_id: int, db: Session = Depend
     db.delete(tk)
     db.commit()
     return {"removed": True}
+
+
+@router.post("/{website_id}/reset")
+async def reset_keyword_data(website_id: int, db: Session = Depends(get_db)):
+    """Clear all keyword snapshots and reset GSC property config for this website.
+    Use when the wrong GSC property was auto-detected."""
+    from database import KeywordSnapshot, Integration
+
+    # Clear snapshots
+    count = db.query(KeywordSnapshot).filter(KeywordSnapshot.website_id == website_id).delete()
+
+    # Clear saved GSC property from integration config
+    integration = db.query(Integration).filter(
+        Integration.website_id == website_id,
+        Integration.integration_type == "google_search_console"
+    ).first()
+    if integration:
+        config = integration.config or {}
+        config.pop("gsc_property", None)
+        integration.config = config
+
+    db.commit()
+    return {"cleared": count, "message": "Keyword data cleared. Sync again to pull fresh data."}
+
+
+# ─── Keyword Research ───
+
+@router.post("/{website_id}/research")
+async def research_keywords(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """AI-powered keyword research from a seed keyword."""
+    data = await request.json()
+    seed = data.get("seed_keyword", "").strip()
+    if not seed:
+        raise HTTPException(status_code=400, detail="seed_keyword is required")
+
+    country = data.get("country", "GB")
+    niche = data.get("niche", "")
+
+    website = db.query(Website).filter(Website.id == website_id).first()
+    domain = website.domain if website else ""
+
+    # Get current ranking keywords to avoid suggesting duplicates
+    from database import KeywordSnapshot
+    latest = db.query(KeywordSnapshot)\
+        .filter(KeywordSnapshot.website_id == website_id)\
+        .order_by(KeywordSnapshot.snapshot_date.desc())\
+        .first()
+
+    current_keywords = []
+    if latest and latest.keyword_data:
+        current_keywords = [kw["query"] for kw in latest.keyword_data[:100]]
+
+    from keyword_research import run_keyword_research
+    result = await run_keyword_research(
+        seed_keyword=seed,
+        domain=domain,
+        country=country,
+        niche=niche,
+        current_keywords=current_keywords,
+    )
+
+    return result
