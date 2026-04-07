@@ -62,6 +62,7 @@ class Website(Base):
     content_items = relationship("ContentItem", back_populates="website", cascade="all, delete-orphan")
     proposed_fixes = relationship("ProposedFix", back_populates="website", cascade="all, delete-orphan")
     integrations = relationship("Integration", back_populates="website", cascade="all, delete-orphan")
+    keyword_snapshots = relationship("KeywordSnapshot", back_populates="website", cascade="all, delete-orphan")
 
 class AuditReport(Base):
     __tablename__ = "audit_reports"
@@ -152,6 +153,39 @@ class ProposedFix(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     website = relationship("Website", back_populates="proposed_fixes")
+
+
+class KeywordSnapshot(Base):
+    """
+    Stores keyword ranking data pulled from Google Search Console.
+    Each snapshot is a daily/weekly pull of all keyword data for a website.
+    """
+    __tablename__ = "keyword_snapshots"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
+
+    # Date range this data covers
+    date_from = Column(DateTime, nullable=False)
+    date_to = Column(DateTime, nullable=False)
+    snapshot_date = Column(DateTime, default=datetime.utcnow)
+
+    # The actual keyword data — stored as JSON array of keyword objects
+    # Each object: {query, clicks, impressions, ctr, position, page}
+    keyword_data = Column(JSON, default=lambda: [])
+
+    # Summary stats
+    total_keywords = Column(Integer, default=0)
+    total_clicks = Column(Integer, default=0)
+    total_impressions = Column(Integer, default=0)
+    avg_position = Column(Float, default=0)
+    avg_ctr = Column(Float, default=0)
+
+    # GSC property used
+    gsc_property = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    website = relationship("Website", back_populates="keyword_snapshots")
 
 
 # Create all tables
