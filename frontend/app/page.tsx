@@ -76,7 +76,7 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'optimizations', 'errors', 'content', 'competitors', 'settings'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'settings'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
@@ -85,8 +85,7 @@ export default function Dashboard() {
     { id: 'divider1', label: '', icon: null },
     { id: 'audit', label: 'Site Audit', icon: Activity },
     { id: 'keywords', label: 'Keywords', icon: Search },
-    { id: 'optimizations', label: 'Auto-Fix', icon: Sparkles },
-    { id: 'errors', label: 'Errors', icon: Shield },
+    { id: 'issues', label: 'Issues & Fixes', icon: Sparkles },
     { id: 'divider2', label: '', icon: null },
     { id: 'content', label: 'Content', icon: Calendar },
     { id: 'competitors', label: 'Competitors', icon: Users },
@@ -324,15 +323,12 @@ export default function Dashboard() {
                 </motion.div>
               )}
 
-              {activeTab === 'optimizations' && selectedWebsite && (
-                <motion.div key={`optimizations-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
-                  <ApprovalQueue websiteId={selectedWebsite} />
-                </motion.div>
-              )}
-
-              {activeTab === 'errors' && selectedWebsite && (
-                <motion.div key={`errors-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
-                  <ErrorMonitor websiteId={selectedWebsite} />
+              {activeTab === 'issues' && selectedWebsite && (
+                <motion.div key={`issues-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                  <div className="space-y-6">
+                    <ErrorMonitor websiteId={selectedWebsite} />
+                    <ApprovalQueue websiteId={selectedWebsite} />
+                  </div>
                 </motion.div>
               )}
 
