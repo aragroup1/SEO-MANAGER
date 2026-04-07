@@ -187,56 +187,54 @@ class ShopifyFixEngine:
         }
         self.ai = AIFixGenerator()
 
+    async def _api_request(self, method: str, endpoint: str, params: Dict = None, json_data: Dict = None, max_retries: int = 5) -> Optional[Dict]:
+        """Make a Shopify API request with automatic retry on 429 rate limits."""
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    kwargs = {"headers": self.headers}
+                    if params:
+                        kwargs["params"] = params
+                    if json_data:
+                        kwargs["json"] = json_data
+
+                    if method == "GET":
+                        resp = await client.get(f"{self.base_api}/{endpoint}", **kwargs)
+                    elif method == "PUT":
+                        resp = await client.put(f"{self.base_api}/{endpoint}", **kwargs)
+                    elif method == "POST":
+                        resp = await client.post(f"{self.base_api}/{endpoint}", **kwargs)
+                    else:
+                        return None
+
+                    if resp.status_code in [200, 201]:
+                        return resp.json()
+                    elif resp.status_code == 429:
+                        # Rate limited — wait and retry with exponential backoff
+                        wait_time = 2.0 * (attempt + 1)
+                        print(f"[Shopify API] Rate limited on {endpoint}, waiting {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"[Shopify API] {method} {endpoint} failed: {resp.status_code} {resp.text[:200]}")
+                        return None
+            except Exception as e:
+                print(f"[Shopify API] {method} {endpoint} error: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2.0)
+                    continue
+                return None
+        print(f"[Shopify API] {method} {endpoint} failed after {max_retries} retries")
+        return None
+
     async def _api_get(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    f"{self.base_api}/{endpoint}",
-                    headers=self.headers,
-                    params=params
-                )
-                if resp.status_code == 200:
-                    return resp.json()
-                else:
-                    print(f"[Shopify API] GET {endpoint} failed: {resp.status_code} {resp.text[:200]}")
-                    return None
-        except Exception as e:
-            print(f"[Shopify API] GET {endpoint} error: {e}")
-            return None
+        return await self._api_request("GET", endpoint, params=params)
 
     async def _api_put(self, endpoint: str, data: Dict) -> Optional[Dict]:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.put(
-                    f"{self.base_api}/{endpoint}",
-                    headers=self.headers,
-                    json=data
-                )
-                if resp.status_code in [200, 201]:
-                    return resp.json()
-                else:
-                    print(f"[Shopify API] PUT {endpoint} failed: {resp.status_code} {resp.text[:200]}")
-                    return None
-        except Exception as e:
-            print(f"[Shopify API] PUT {endpoint} error: {e}")
-            return None
+        return await self._api_request("PUT", endpoint, json_data=data)
 
     async def _api_post(self, endpoint: str, data: Dict) -> Optional[Dict]:
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{self.base_api}/{endpoint}",
-                    headers=self.headers,
-                    json=data
-                )
-                if resp.status_code in [200, 201]:
-                    return resp.json()
-                else:
-                    print(f"[Shopify API] POST {endpoint} failed: {resp.status_code} {resp.text[:200]}")
-                    return None
-        except Exception as e:
-            print(f"[Shopify API] POST {endpoint} error: {e}")
-            return None
+        return await self._api_request("POST", endpoint, json_data=data)
 
     async def _get_product_metafields(self, product_id: str) -> Dict[str, str]:
         """Fetch SEO metafields (title_tag, description_tag) for a product."""
@@ -319,10 +317,14 @@ class ShopifyFixEngine:
 
             print(f"[Shopify Scan] Page {page}: scanning {len(products)} products")
 
-            for product in products:
+            for i, product in enumerate(products):
                 product_fixes = await self._analyze_product(product, website_id, batch_id)
                 fixes.extend(product_fixes)
-                await asyncio.sleep(0.6)
+                if (i + 1) % 25 == 0:
+                    print(f"[Shopify Scan]   Progress: {i + 1}/{len(products)} products on page {page} ({len(fixes)} fixes so far)")
+                # 1.5s between products to stay well under Shopify's 2 req/sec limit
+                # (each product makes 2 API calls: product data already fetched + metafields)
+                await asyncio.sleep(1.5)
 
             since_id = products[-1]["id"]
             if len(products) < limit:
@@ -587,7 +589,7 @@ class ShopifyFixEngine:
                         "batch_id": batch_id,
                     })
 
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(1.5)
 
             since_id = pages[-1]["id"]
             if len(pages) < 250:
