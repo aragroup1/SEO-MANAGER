@@ -177,6 +177,7 @@ class SEOAuditEngine:
         """Check if a URL should be crawled."""
         parsed = urlparse(url)
         path = parsed.path.lower()
+        query = parsed.query.lower()
 
         # Skip non-HTML resources
         skip_extensions = (
@@ -187,14 +188,22 @@ class SEOAuditEngine:
         if any(path.endswith(ext) for ext in skip_extensions):
             return False
 
-        # Skip common non-content paths
-        skip_paths = (
+        # Skip non-content paths (exact path segments only)
+        skip_path_segments = (
             '/cdn-cgi/', '/wp-admin/', '/wp-includes/', '/wp-json/',
-            '/admin/', '/cart', '/checkout', '/account',
-            '/search', '?variant=', '?v='
+            '/admin/', '/checkout/', '/account/',
         )
-        full = url.lower()
-        if any(skip in full for skip in skip_paths):
+        if any(seg in path for seg in skip_path_segments):
+            return False
+
+        # Skip exact paths
+        skip_exact = ('/cart', '/checkout', '/account', '/search')
+        if path.rstrip('/') in skip_exact:
+            return False
+
+        # Skip query parameters that produce duplicate/non-content pages
+        skip_params = ('variant=', 'sort_by=', 'page=', 'q=', 'filter=')
+        if query and any(p in query for p in skip_params):
             return False
 
         return True
@@ -258,10 +267,10 @@ class SEOAuditEngine:
     # ─────────────────────────────────────────────
     async def run_comprehensive_audit(self) -> Dict[str, Any]:
         """Run full site crawl and audit."""
-        print("[Audit] Starting deep audit for: " + str(self.domain))
 
         try:
             with self:
+                print("[Audit] Starting deep audit for: " + str(self.domain))
                 connector = aiohttp.TCPConnector(limit=5, ssl=False)
                 async with aiohttp.ClientSession(
                     connector=connector,
