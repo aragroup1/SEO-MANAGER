@@ -148,6 +148,26 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
     }
   };
 
+  const retryFix = async (fixId: number) => {
+    try {
+      await fetch(`${API_URL}/api/fixes/${fixId}/retry`, { method: 'POST' });
+      fetchFixes();
+      fetchSummary();
+    } catch (error) {
+      console.error('Error retrying fix:', error);
+    }
+  };
+
+  const batchRetry = async () => {
+    try {
+      await fetch(`${API_URL}/api/fixes/${websiteId}/batch/retry`, { method: 'POST' });
+      fetchFixes();
+      fetchSummary();
+    } catch (error) {
+      console.error('Error batch retrying:', error);
+    }
+  };
+
   const saveEdit = async (fixId: number) => {
     try {
       await fetch(`${API_URL}/api/fixes/${fixId}/edit`, {
@@ -245,6 +265,13 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
           <p className="text-purple-300 mt-1">AI-generated fixes awaiting your approval</p>
         </div>
         <div className="flex items-center gap-3">
+          {summary && summary.by_status.failed > 0 && (
+            <button onClick={batchRetry}
+              className="bg-orange-500/20 text-orange-400 px-4 py-2 rounded-lg font-medium hover:bg-orange-500/30 transition-all flex items-center gap-2">
+              <RefreshCw className="w-4 h-4" />
+              Retry Failed ({summary.by_status.failed})
+            </button>
+          )}
           {summary && summary.by_status.approved > 0 && (
             <button onClick={batchApply}
               className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg font-medium hover:bg-green-500/30 transition-all flex items-center gap-2">
@@ -388,6 +415,13 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
                         className="bg-blue-500/20 text-blue-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50">
                         {applyingFix === fix.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
                         Apply
+                      </button>
+                    )}
+                    {fix.status === 'failed' && (
+                      <button onClick={(e) => { e.stopPropagation(); retryFix(fix.id); }}
+                        className="bg-orange-500/20 text-orange-400 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-orange-500/30 transition-all flex items-center gap-1.5">
+                        <RefreshCw className="w-3 h-3" />
+                        Retry
                       </button>
                     )}
                     <ChevronRight className={`w-4 h-4 text-gray-500 transition-transform ${expandedFix === fix.id ? 'rotate-90' : ''}`} />
