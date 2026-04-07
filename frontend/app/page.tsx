@@ -319,7 +319,7 @@ export default function Dashboard() {
 
               {activeTab === 'keywords' && selectedWebsite && (
                 <motion.div key={`keywords-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
-                  <KeywordTracker websiteId={selectedWebsite} />
+                  <KeywordTracker key={`kt-${selectedWebsite}`} websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
