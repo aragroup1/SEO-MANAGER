@@ -154,20 +154,21 @@ class SEOAuditEngine:
     #  URL helpers
     # ─────────────────────────────────────────────
     def _normalize_url(self, url: str) -> Optional[str]:
-        """Normalize a URL for deduplication."""
+        """Normalize a URL for deduplication. Strips query strings since
+        the same path with different params is the same page for SEO."""
         try:
             parsed = urlparse(url)
             # Only crawl same domain
             if parsed.netloc and parsed.netloc != self.domain:
                 return None
-            # Remove fragments
+            # Remove fragments AND query strings for dedup
             normalized = urlunparse((
                 parsed.scheme or 'https',
                 parsed.netloc or self.domain,
                 parsed.path.rstrip('/') or '/',
-                parsed.params,
-                parsed.query,
-                ''  # Remove fragment
+                '',   # params
+                '',   # query - strip for dedup
+                ''    # fragment
             ))
             return normalized
         except Exception:
@@ -315,14 +316,25 @@ class SEOAuditEngine:
     # ─────────────────────────────────────────────
     async def _crawl_site(self, session: aiohttp.ClientSession):
         """Breadth-first crawl of the site."""
+        skipped_normalize = 0
+        skipped_already_crawled = 0
+        skipped_not_crawlable = 0
+
         while self.urls_to_crawl and len(self.crawled_urls) < self.MAX_PAGES:
             url = self.urls_to_crawl.pop(0)
 
             # Skip if already crawled
             normalized = self._normalize_url(url)
-            if not normalized or normalized in self.crawled_urls:
+            if not normalized:
+                skipped_normalize += 1
+                continue
+            if normalized in self.crawled_urls:
+                skipped_already_crawled += 1
                 continue
             if not self._is_crawlable(normalized):
+                skipped_not_crawlable += 1
+                if skipped_not_crawlable <= 10:
+                    print("[Audit]   Skipped (not crawlable): " + normalized)
                 continue
 
             self.crawled_urls.add(normalized)
@@ -393,7 +405,10 @@ class SEOAuditEngine:
 
             await asyncio.sleep(self.CRAWL_DELAY)
 
-        print("[Audit] Crawl complete. " + str(len(self.crawled_urls)) + " pages crawled.")
+        print("[Audit] Crawl complete. " + str(len(self.crawled_urls)) + " pages crawled."
+              + " Skipped: " + str(skipped_normalize) + " bad URL, "
+              + str(skipped_already_crawled) + " already crawled, "
+              + str(skipped_not_crawlable) + " not crawlable")
 
     # ─────────────────────────────────────────────
     #  Per-page checks
