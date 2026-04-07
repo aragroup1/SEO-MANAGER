@@ -16,6 +16,7 @@ import ContentCalendar from '@/components/ContentCalendar';
 import CompetitorAnalysis from '@/components/CompetitorAnalysis';
 import AuditDashboard from '@/components/AuditDashboard';
 import WebsiteManager from '@/components/WebsiteManager';
+import KeywordTracker from '@/components/KeywordTracker';
 import SettingsPanel from '@/components/SettingsPanel';
 
 interface Website {
@@ -95,7 +96,7 @@ export default function Dashboard() {
   const selectedSite = websites.find(w => w.id === selectedWebsite);
 
   // Tabs that need a website selected
-  const websiteRequiredTabs = ['audit', 'optimizations', 'errors', 'content', 'competitors', 'settings'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'optimizations', 'errors', 'content', 'competitors', 'settings'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   return (
@@ -231,6 +232,7 @@ export default function Dashboard() {
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'websites', label: 'Websites', icon: Globe },
             { id: 'audit', label: 'Site Audit', icon: Activity },
+            { id: 'keywords', label: 'Keywords', icon: Search },
             { id: 'optimizations', label: 'Auto-Fix', icon: Sparkles },
             { id: 'errors', label: 'Error Monitor', icon: Shield },
             { id: 'content', label: 'Content Calendar', icon: Calendar },
@@ -324,6 +326,12 @@ export default function Dashboard() {
           {activeTab === 'audit' && selectedWebsite && (
             <motion.div key={`audit-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
               <AuditDashboard websiteId={selectedWebsite} />
+            </motion.div>
+          )}
+
+          {activeTab === 'keywords' && selectedWebsite && (
+            <motion.div key={`keywords-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+              <KeywordTracker websiteId={selectedWebsite} />
             </motion.div>
           )}
 
