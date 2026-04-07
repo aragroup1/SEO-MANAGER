@@ -18,7 +18,7 @@ load_dotenv()
 # Import shared database objects
 from database import (
     Base, engine, SessionLocal, get_db, DATABASE_URL,
-    User, Website, AuditReport, ContentItem, Integration, ProposedFix, KeywordSnapshot
+    User, Website, AuditReport, ContentItem, Integration, ProposedFix, KeywordSnapshot, TrackedKeyword
 )
 
 app = FastAPI(title="SEO Intelligence Platform")
@@ -128,6 +128,7 @@ async def delete_website(website_id: int, db: Session = Depends(get_db)):
         db.query(Integration).filter(Integration.website_id == website_id).delete()
         db.query(ProposedFix).filter(ProposedFix.website_id == website_id).delete()
         db.query(KeywordSnapshot).filter(KeywordSnapshot.website_id == website_id).delete()
+        db.query(TrackedKeyword).filter(TrackedKeyword.website_id == website_id).delete()
         db.query(AuditReport).filter(AuditReport.website_id == website_id).delete()
         db.query(ContentItem).filter(ContentItem.website_id == website_id).delete()
         db.delete(website)
