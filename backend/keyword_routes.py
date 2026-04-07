@@ -90,6 +90,14 @@ async def get_keyword_history_endpoint(website_id: int, limit: int = 10, db: Ses
     return result
 
 
+@router.get("/{website_id}/keyword-history")
+async def get_single_keyword_history(website_id: int, keyword: str, days: int = 90, db: Session = Depends(get_db)):
+    """Get daily historical ranking data for a specific keyword."""
+    from search_console import fetch_keyword_history_detail
+    result = await fetch_keyword_history_detail(website_id, keyword, days=days)
+    return result
+
+
 @router.get("/{website_id}/properties")
 async def list_properties(website_id: int, db: Session = Depends(get_db)):
     from search_console import list_gsc_properties
