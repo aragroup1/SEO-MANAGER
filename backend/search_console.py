@@ -175,13 +175,17 @@ async def fetch_keyword_data(
             gsc_property = config.get("gsc_property", "")
 
         if not gsc_property:
-            # Auto-detect
+            # Auto-detect — only match properties that contain this website's domain
             domain = website.domain
+            # Strip www. for matching
+            bare_domain = domain.replace("www.", "")
+
             candidates = [
-                "sc-domain:" + domain,
-                "https://" + domain + "/",
-                "http://" + domain + "/",
-                "https://www." + domain + "/",
+                "sc-domain:" + bare_domain,
+                "https://" + bare_domain + "/",
+                "http://" + bare_domain + "/",
+                "https://www." + bare_domain + "/",
+                "http://www." + bare_domain + "/",
             ]
             props_result = await list_gsc_properties(website_id)
             if "properties" in props_result:
@@ -190,11 +194,21 @@ async def fetch_keyword_data(
                     if candidate in available:
                         gsc_property = candidate
                         break
-                if not gsc_property and available:
-                    gsc_property = available[0]
+
+                # NEVER fall back to a random property — it could be a different website
+                if not gsc_property:
+                    # Check if any available property contains this domain
+                    for prop_url in available:
+                        if bare_domain in prop_url:
+                            gsc_property = prop_url
+                            break
 
             if not gsc_property:
-                return {"error": "No Search Console property found for " + domain}
+                return {
+                    "error": "No Search Console property found matching " + domain + ". "
+                             "Reconnect Google Search Console and select the correct property.",
+                    "available_properties": props_result.get("properties", []) if "properties" in (props_result or {}) else []
+                }
 
             config = integration.config or {}
             config["gsc_property"] = gsc_property
