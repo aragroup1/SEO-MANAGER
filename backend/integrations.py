@@ -257,6 +257,29 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
     return {"connected": False, "message": "Integration type not handled"}
 
 
+@router.post("/{website_id}/set-gsc-property")
+async def set_gsc_property(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Save the user's selected GSC property for this website."""
+    data = await request.json()
+    property_url = data.get("property_url", "")
+
+    integration = db.query(Integration).filter(
+        Integration.website_id == website_id,
+        Integration.integration_type == "google_search_console"
+    ).first()
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="GSC integration not found")
+
+    config = integration.config or {}
+    config["gsc_property"] = property_url
+    integration.config = config
+    integration.account_name = (integration.account_name or "Google") + " — " + property_url
+    db.commit()
+
+    return {"saved": True, "property": property_url}
+
+
 @router.post("/{website_id}/disconnect")
 async def disconnect_integration(website_id: int, request: Request, db: Session = Depends(get_db)):
     data = await request.json()
@@ -380,6 +403,70 @@ async def google_oauth_callback(code: str, state: str, db: Session = Depends(get
 
     db.commit()
 
+    # For Search Console: fetch available properties and show picker
+    if integration_type == "google_search_console":
+        properties_html = ""
+        try:
+            async with httpx.AsyncClient() as client:
+                props_response = await client.get(
+                    "https://www.googleapis.com/webmasters/v3/sites",
+                    headers={"Authorization": f"Bearer {access_token}"}
+                )
+                if props_response.status_code == 200:
+                    props_data = props_response.json()
+                    for entry in props_data.get("siteEntry", []):
+                        site_url = entry.get("siteUrl", "")
+                        perm = entry.get("permissionLevel", "")
+                        properties_html += f'<button class="prop-btn" onclick="selectProperty(\'{site_url}\')">{site_url}<span class="perm">{perm}</span></button>'
+        except Exception as e:
+            print(f"[GSC] Error fetching properties: {e}")
+
+        if not properties_html:
+            properties_html = '<p style="color:#aaa;text-align:center;padding:20px;">No properties found. Add your site in Google Search Console first.</p>'
+
+        return HTMLResponse(content=f"""
+        <html>
+        <head><style>
+            * {{ margin:0; padding:0; box-sizing:border-box; }}
+            body {{ font-family:system-ui; background:#1a1a2e; color:white; display:flex; align-items:center; justify-content:center; height:100vh; }}
+            .container {{ max-width:420px; width:100%; padding:32px; }}
+            h2 {{ margin-bottom:8px; font-size:20px; }}
+            p.sub {{ color:#a0a0c0; font-size:13px; margin-bottom:20px; }}
+            .prop-btn {{ display:block; width:100%; text-align:left; padding:12px 16px; margin-bottom:8px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:10px; color:white; font-size:14px; cursor:pointer; transition:all 0.2s; }}
+            .prop-btn:hover {{ background:rgba(168,85,247,0.2); border-color:rgba(168,85,247,0.4); }}
+            .perm {{ display:block; color:#888; font-size:11px; margin-top:2px; text-transform:capitalize; }}
+            .skip {{ display:block; text-align:center; color:#888; font-size:12px; margin-top:16px; cursor:pointer; text-decoration:underline; }}
+        </style></head>
+        <body>
+            <div class="container">
+                <div style="text-align:center;font-size:32px;margin-bottom:12px;">&#9989;</div>
+                <h2>Google Account Connected</h2>
+                <p class="sub">Select the Search Console property for this website:</p>
+                <div id="props">{properties_html}</div>
+                <a class="skip" onclick="selectProperty('')">Skip — auto-detect later</a>
+            </div>
+            <script>
+                function selectProperty(siteUrl) {{
+                    if (siteUrl) {{
+                        fetch('/api/integrations/{website_id}/set-gsc-property', {{
+                            method: 'POST',
+                            headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{property_url: siteUrl}})
+                        }}).then(() => {{
+                            window.opener && window.opener.postMessage('integration_connected', '*');
+                            window.close();
+                        }});
+                    }} else {{
+                        window.opener && window.opener.postMessage('integration_connected', '*');
+                        window.close();
+                    }}
+                }}
+            </script>
+        </body>
+        </html>
+        """)
+
+    # For GA4 and others: just close
     return HTMLResponse(content="""
     <html>
     <body>
