@@ -63,6 +63,7 @@ class Website(Base):
     proposed_fixes = relationship("ProposedFix", back_populates="website", cascade="all, delete-orphan")
     integrations = relationship("Integration", back_populates="website", cascade="all, delete-orphan")
     keyword_snapshots = relationship("KeywordSnapshot", back_populates="website", cascade="all, delete-orphan")
+    tracked_keywords = relationship("TrackedKeyword", back_populates="website", cascade="all, delete-orphan")
 
 class AuditReport(Base):
     __tablename__ = "audit_reports"
@@ -186,6 +187,36 @@ class KeywordSnapshot(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     website = relationship("Website", back_populates="keyword_snapshots")
+
+
+class TrackedKeyword(Base):
+    """
+    Keywords the user has selected as primary targets for Road to #1.
+    These get special tracking, competitor analysis, and optimization recommendations.
+    """
+    __tablename__ = "tracked_keywords"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
+    keyword = Column(String, nullable=False)
+
+    # Latest ranking data (updated on each sync)
+    current_position = Column(Float, nullable=True)
+    current_clicks = Column(Integer, default=0)
+    current_impressions = Column(Integer, default=0)
+    current_ctr = Column(Float, default=0)
+    ranking_url = Column(String, nullable=True)
+
+    # Target
+    target_position = Column(Integer, default=1)
+    notes = Column(Text, nullable=True)
+
+    # Status
+    status = Column(String, default="tracking")  # tracking, achieved, paused
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    website = relationship("Website", back_populates="tracked_keywords")
 
 
 # Create all tables
