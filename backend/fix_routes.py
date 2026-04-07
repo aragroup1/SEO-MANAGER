@@ -216,6 +216,35 @@ async def reject_fix(fix_id: int, db: Session = Depends(get_db)):
     return {"status": "rejected", "message": "Fix rejected and will not be applied."}
 
 
+@router.post("/{fix_id}/retry")
+async def retry_fix(fix_id: int, db: Session = Depends(get_db)):
+    """Reset a failed fix back to approved so it can be re-applied."""
+    fix = db.query(ProposedFix).filter(ProposedFix.id == fix_id).first()
+    if not fix:
+        raise HTTPException(status_code=404, detail="Fix not found")
+    if fix.status != "failed":
+        raise HTTPException(status_code=400, detail=f"Only failed fixes can be retried (current status: {fix.status})")
+
+    fix.status = "approved"
+    fix.error_message = None
+    fix.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {"status": "approved", "message": "Fix reset to approved. Click 'Apply' to try again."}
+
+
+@router.post("/{website_id}/batch/retry")
+async def batch_retry(website_id: int, db: Session = Depends(get_db)):
+    """Reset all failed fixes back to approved."""
+    count = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id,
+        ProposedFix.status == "failed"
+    ).update({"status": "approved", "error_message": None, "updated_at": datetime.utcnow()}, synchronize_session=False)
+    db.commit()
+
+    return {"retried": count, "message": f"Reset {count} failed fixes to approved."}
+
+
 @router.post("/{fix_id}/apply")
 async def apply_fix(
     fix_id: int,
