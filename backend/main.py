@@ -18,7 +18,7 @@ load_dotenv()
 # Import shared database objects
 from database import (
     Base, engine, SessionLocal, get_db, DATABASE_URL,
-    User, Website, AuditReport, ContentItem, Integration, ProposedFix
+    User, Website, AuditReport, ContentItem, Integration, ProposedFix, KeywordSnapshot
 )
 
 app = FastAPI(title="SEO Intelligence Platform")
@@ -127,6 +127,7 @@ async def delete_website(website_id: int, db: Session = Depends(get_db)):
         # Manually delete related records to avoid FK constraint errors
         db.query(Integration).filter(Integration.website_id == website_id).delete()
         db.query(ProposedFix).filter(ProposedFix.website_id == website_id).delete()
+        db.query(KeywordSnapshot).filter(KeywordSnapshot.website_id == website_id).delete()
         db.query(AuditReport).filter(AuditReport.website_id == website_id).delete()
         db.query(ContentItem).filter(ContentItem.website_id == website_id).delete()
         db.delete(website)
@@ -356,6 +357,9 @@ app.include_router(integrations_router)
 
 from fix_routes import router as fix_router
 app.include_router(fix_router)
+
+from keyword_routes import router as keyword_router
+app.include_router(keyword_router)
 
 # --- Startup ---
 
