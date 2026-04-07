@@ -4,10 +4,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Search, TrendingUp, TrendingDown, Minus, RefreshCw,
-  ArrowUp, ArrowDown, ArrowUpDown, Eye, MousePointerClick,
-  Target, Loader2, Filter, Download, ExternalLink,
-  BarChart3, Hash, ChevronRight, AlertTriangle, Globe
+  Search, RefreshCw, ArrowUp, ArrowDown, ArrowUpDown, Eye,
+  MousePointerClick, Target, Loader2, ExternalLink,
+  BarChart3, Hash, AlertTriangle, Star, Trash2, Trophy,
+  TrendingUp, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 interface Keyword {
@@ -33,9 +33,16 @@ interface Snapshot {
   keywords: Keyword[];
 }
 
-interface GSCProperty {
-  site_url: string;
-  permission_level: string;
+interface TrackedKW {
+  id: number;
+  keyword: string;
+  current_position: number | null;
+  current_clicks: number;
+  current_impressions: number;
+  current_ctr: number;
+  ranking_url: string | null;
+  target_position: number;
+  status: string;
 }
 
 type SortField = 'clicks' | 'impressions' | 'ctr' | 'position' | 'query';
@@ -43,6 +50,7 @@ type SortDir = 'asc' | 'desc';
 
 export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [trackedKeywords, setTrackedKeywords] = useState<TrackedKW[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -51,15 +59,10 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [positionFilter, setPositionFilter] = useState('all');
   const [expandedKeyword, setExpandedKeyword] = useState<string | null>(null);
+  const [showTracked, setShowTracked] = useState(true);
+  const [trackingInProgress, setTrackingInProgress] = useState<string | null>(null);
 
-  // GSC property selection
-  const [properties, setProperties] = useState<GSCProperty[]>([]);
-  const [showPropertyPicker, setShowPropertyPicker] = useState(false);
-  const [loadingProperties, setLoadingProperties] = useState(false);
-
-  // Track snapshot ID at time of sync to detect new data
   const snapshotIdAtSync = useRef<number | null>(null);
-
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
   const fetchKeywords = useCallback(async () => {
@@ -70,7 +73,6 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
         if (data.snapshot) {
           setSnapshot(data.snapshot);
           setError('');
-          // If we're syncing and got a NEW snapshot, stop syncing
           if (syncing && snapshotIdAtSync.current !== null && data.snapshot.id !== snapshotIdAtSync.current) {
             setSyncing(false);
           }
@@ -85,55 +87,46 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
     }
   }, [API_URL, websiteId, syncing]);
 
-  // Reset state and fetch when website changes
+  const fetchTracked = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/keywords/${websiteId}/tracked`);
+      if (response.ok) {
+        const data = await response.json();
+        setTrackedKeywords(data.tracked || []);
+      }
+    } catch (err) {
+      console.error('Error fetching tracked:', err);
+    }
+  }, [API_URL, websiteId]);
+
+  // Reset on website change
   useEffect(() => {
     setSnapshot(null);
+    setTrackedKeywords([]);
     setLoading(true);
     setSyncing(false);
     setError('');
     setSearchQuery('');
     setExpandedKeyword(null);
-    setShowPropertyPicker(false);
     snapshotIdAtSync.current = null;
     fetchKeywords();
+    fetchTracked();
   }, [websiteId]);
 
   // Poll while syncing
   useEffect(() => {
     if (!syncing) return;
-    const interval = setInterval(fetchKeywords, 5000);
+    const interval = setInterval(() => { fetchKeywords(); fetchTracked(); }, 5000);
     const timeout = setTimeout(() => setSyncing(false), 90000);
     return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [syncing, fetchKeywords]);
+  }, [syncing, fetchKeywords, fetchTracked]);
 
-  const fetchProperties = async () => {
-    setLoadingProperties(true);
-    try {
-      const response = await fetch(`${API_URL}/api/keywords/${websiteId}/properties`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.properties) {
-          setProperties(data.properties);
-          setShowPropertyPicker(true);
-        } else if (data.error) {
-          setError(data.error);
-        }
-      }
-    } catch (err) {
-      setError('Failed to load properties');
-    } finally {
-      setLoadingProperties(false);
-    }
-  };
-
-  const syncKeywords = async (propertyUrl?: string) => {
+  const syncKeywords = async () => {
     snapshotIdAtSync.current = snapshot?.id ?? null;
     setSyncing(true);
     setError('');
-    setShowPropertyPicker(false);
     try {
-      let url = `${API_URL}/api/keywords/${websiteId}/sync`;
-      const response = await fetch(url, { method: 'POST' });
+      const response = await fetch(`${API_URL}/api/keywords/${websiteId}/sync`, { method: 'POST' });
       if (!response.ok) {
         const data = await response.json();
         setError(data.detail || 'Sync failed');
@@ -145,17 +138,50 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
     }
   };
 
-  // Filtered + sorted keywords
+  const trackKeyword = async (kw: Keyword) => {
+    setTrackingInProgress(kw.query);
+    try {
+      const response = await fetch(`${API_URL}/api/keywords/${websiteId}/track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword: kw.query,
+          position: kw.position,
+          clicks: kw.clicks,
+          impressions: kw.impressions,
+          ctr: kw.ctr,
+          page: kw.page || '',
+        })
+      });
+      if (response.ok) {
+        await fetchTracked();
+      }
+    } catch (err) {
+      console.error('Error tracking keyword:', err);
+    } finally {
+      setTrackingInProgress(null);
+    }
+  };
+
+  const untrackKeyword = async (id: number) => {
+    try {
+      await fetch(`${API_URL}/api/keywords/${websiteId}/track/${id}`, { method: 'DELETE' });
+      await fetchTracked();
+    } catch (err) {
+      console.error('Error untracking:', err);
+    }
+  };
+
+  const isTracked = (query: string) => trackedKeywords.some(tk => tk.keyword === query.toLowerCase());
+
+  // Filter and sort
   const filteredKeywords = useMemo(() => {
     if (!snapshot?.keywords) return [];
     let filtered = [...snapshot.keywords];
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      filtered = filtered.filter(k =>
-        k.query.toLowerCase().includes(q) ||
-        (k.page && k.page.toLowerCase().includes(q))
-      );
+      filtered = filtered.filter(k => k.query.toLowerCase().includes(q) || (k.page && k.page.toLowerCase().includes(q)));
     }
 
     if (positionFilter !== 'all') {
@@ -169,24 +195,16 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
     }
 
     filtered.sort((a, b) => {
-      if (sortField === 'query') {
-        return sortDir === 'asc' ? a.query.localeCompare(b.query) : b.query.localeCompare(a.query);
-      }
-      const va = a[sortField] as number;
-      const vb = b[sortField] as number;
-      return sortDir === 'asc' ? va - vb : vb - va;
+      if (sortField === 'query') return sortDir === 'asc' ? a.query.localeCompare(b.query) : b.query.localeCompare(a.query);
+      return sortDir === 'asc' ? (a[sortField] as number) - (b[sortField] as number) : (b[sortField] as number) - (a[sortField] as number);
     });
 
     return filtered;
   }, [snapshot, searchQuery, sortField, sortDir, positionFilter]);
 
   const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir(field === 'position' ? 'asc' : 'desc');
-    }
+    if (sortField === field) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir(field === 'position' ? 'asc' : 'desc'); }
   };
 
   const getPositionColor = (pos: number) => {
@@ -207,97 +225,47 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return <ArrowUpDown className="w-3 h-3 text-gray-600" />;
-    return sortDir === 'asc'
-      ? <ArrowUp className="w-3 h-3 text-purple-400" />
-      : <ArrowDown className="w-3 h-3 text-purple-400" />;
+    return sortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-purple-400" /> : <ArrowDown className="w-3 h-3 text-purple-400" />;
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 text-purple-400 animate-spin" />
-      </div>
-    );
+    return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 text-purple-400 animate-spin" /></div>;
   }
 
-  // No data state
+  // No data
   if (!snapshot) {
     return (
       <div className="space-y-6">
-        {syncing && (
+        {syncing ? (
           <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-8 text-center">
             <Loader2 className="w-10 h-10 text-purple-400 animate-spin mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-white mb-2">Syncing Keywords...</h3>
             <p className="text-purple-300 text-sm">Pulling data from Google Search Console. This may take 10-30 seconds.</p>
           </div>
-        )}
-
-        {!syncing && (
+        ) : (
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 border border-white/20 text-center">
             <div className="w-20 h-20 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
               <Search className="w-10 h-10 text-purple-400" />
             </div>
             <h2 className="text-2xl font-bold text-white mb-3">No Keyword Data Yet</h2>
             <p className="text-purple-300 mb-6">
-              Connect Google Search Console and sync to see your real keyword rankings, clicks, and impressions.
+              Connect Google Search Console and sync to see your real keyword rankings.
             </p>
             {error && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 max-w-lg mx-auto">
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}
-            <div className="flex gap-3 justify-center">
-              <button onClick={() => syncKeywords()}
-                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-lg font-medium hover:shadow-lg transition-all">
-                Sync from Search Console
-              </button>
-              <button onClick={fetchProperties} disabled={loadingProperties}
-                className="bg-white/10 text-white px-6 py-3 rounded-lg font-medium hover:bg-white/20 transition-all flex items-center gap-2">
-                {loadingProperties ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
-                Choose Property
-              </button>
-            </div>
+            <button onClick={syncKeywords}
+              className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-lg font-medium hover:shadow-lg transition-all">
+              Sync from Search Console
+            </button>
           </div>
         )}
-
-        {/* Property Picker Modal */}
-        <AnimatePresence>
-          {showPropertyPicker && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-              onClick={() => setShowPropertyPicker(false)}>
-              <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
-                className="bg-gradient-to-br from-gray-900 to-purple-900 rounded-2xl p-6 max-w-md w-full border border-white/20"
-                onClick={e => e.stopPropagation()}>
-                <h3 className="text-xl font-bold text-white mb-4">Select Search Console Property</h3>
-                <p className="text-gray-400 text-sm mb-4">Choose which property to pull keyword data from:</p>
-                {properties.length === 0 ? (
-                  <p className="text-gray-500 text-sm py-4 text-center">No properties found. Make sure your site is added in Google Search Console.</p>
-                ) : (
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {properties.map(prop => (
-                      <button key={prop.site_url}
-                        onClick={() => syncKeywords(prop.site_url)}
-                        className="w-full text-left p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-all border border-white/10 hover:border-purple-500/30">
-                        <p className="text-white text-sm font-medium">{prop.site_url}</p>
-                        <p className="text-gray-500 text-xs mt-0.5 capitalize">{prop.permission_level}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <button onClick={() => setShowPropertyPicker(false)}
-                  className="w-full mt-4 bg-white/10 text-white px-4 py-2 rounded-lg text-sm hover:bg-white/20 transition-all">
-                  Cancel
-                </button>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
     );
   }
 
-  // Position distribution
   const positionBuckets = {
     top3: snapshot.keywords.filter(k => k.position <= 3).length,
     top10: snapshot.keywords.filter(k => k.position > 3 && k.position <= 10).length,
@@ -320,18 +288,11 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
             {snapshot.date_from} to {snapshot.date_to}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={fetchProperties} disabled={loadingProperties}
-            className="bg-white/10 text-gray-300 px-3 py-2 rounded-lg text-sm hover:bg-white/20 transition-all flex items-center gap-1.5">
-            {loadingProperties ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
-            Property
-          </button>
-          <button onClick={() => syncKeywords()} disabled={syncing}
-            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {syncing ? 'Syncing...' : 'Refresh'}
-          </button>
-        </div>
+        <button onClick={syncKeywords} disabled={syncing}
+          className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
+          {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          {syncing ? 'Syncing...' : 'Refresh Data'}
+        </button>
       </div>
 
       {error && (
@@ -356,6 +317,61 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           </div>
         ))}
       </div>
+
+      {/* Tracked Keywords (Road to #1) */}
+      {trackedKeywords.length > 0 && (
+        <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 backdrop-blur-md rounded-xl border border-yellow-500/20 overflow-hidden">
+          <button onClick={() => setShowTracked(!showTracked)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-all">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-5 h-5 text-yellow-400" />
+              <h3 className="text-white font-semibold text-sm">Road to #1 — Tracked Keywords</h3>
+              <span className="text-xs text-yellow-400 bg-yellow-500/20 px-2 py-0.5 rounded-full">{trackedKeywords.length}</span>
+            </div>
+            {showTracked ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          </button>
+
+          <AnimatePresence>
+            {showTracked && (
+              <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+                <div className="px-4 pb-4 space-y-2">
+                  {trackedKeywords.map(tk => (
+                    <div key={tk.id} className="flex items-center gap-3 bg-white/5 rounded-lg p-3 border border-white/10">
+                      <Star className="w-4 h-4 text-yellow-400 fill-yellow-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium">{tk.keyword}</p>
+                        {tk.ranking_url && (
+                          <p className="text-gray-500 text-xs truncate">{tk.ranking_url}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-center">
+                          <p className={`text-lg font-bold ${tk.current_position ? getPositionColor(tk.current_position) : 'text-gray-500'}`}>
+                            {tk.current_position ? tk.current_position : '—'}
+                          </p>
+                          <p className="text-[10px] text-gray-500">Position</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-medium text-blue-400">{tk.current_clicks}</p>
+                          <p className="text-[10px] text-gray-500">Clicks</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-medium text-purple-300">{tk.current_impressions}</p>
+                          <p className="text-[10px] text-gray-500">Impr.</p>
+                        </div>
+                        <button onClick={() => untrackKeyword(tk.id)}
+                          className="text-gray-600 hover:text-red-400 transition-colors p-1" title="Remove from tracking">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
       {/* Position Distribution */}
       <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
@@ -406,8 +422,10 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
 
       {/* Keyword Table */}
       <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden">
+        {/* Header */}
         <div className="grid grid-cols-12 gap-2 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400">
-          <div className="col-span-5 flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleSort('query')}>
+          <div className="col-span-1"></div>
+          <div className="col-span-4 flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleSort('query')}>
             Keyword <SortIcon field="query" />
           </div>
           <div className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('clicks')}>
@@ -424,62 +442,93 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           </div>
         </div>
 
+        {/* Rows */}
         <div className="max-h-[600px] overflow-y-auto">
-          {filteredKeywords.slice(0, 200).map((kw, idx) => (
-            <div key={kw.query + idx}>
-              <div className="grid grid-cols-12 gap-2 px-4 py-2.5 border-b border-white/5 hover:bg-white/5 transition-all cursor-pointer items-center"
-                onClick={() => setExpandedKeyword(expandedKeyword === kw.query ? null : kw.query)}>
-                <div className="col-span-5 min-w-0">
-                  <p className="text-white text-sm truncate">{kw.query}</p>
-                </div>
-                <div className="col-span-2 text-right">
-                  <span className="text-blue-400 text-sm font-medium">{kw.clicks.toLocaleString()}</span>
-                </div>
-                <div className="col-span-2 text-right">
-                  <span className="text-purple-300 text-sm">{kw.impressions.toLocaleString()}</span>
-                </div>
-                <div className="col-span-1 text-right">
-                  <span className="text-gray-400 text-sm">{kw.ctr}%</span>
-                </div>
-                <div className="col-span-2 text-right flex items-center justify-end gap-2">
-                  <span className={`text-sm font-bold ${getPositionColor(kw.position)}`}>{kw.position}</span>
-                  <div className={`px-1.5 py-0.5 rounded text-xs border ${getPositionBg(kw.position)} ${getPositionColor(kw.position)}`}>
-                    {kw.position <= 3 ? '🏆' : kw.position <= 10 ? 'P1' : kw.position <= 20 ? 'P2' : kw.position <= 50 ? 'P3+' : '50+'}
+          {filteredKeywords.slice(0, 200).map((kw, idx) => {
+            const tracked = isTracked(kw.query);
+            return (
+              <div key={kw.query + idx}>
+                <div className="grid grid-cols-12 gap-2 px-4 py-2.5 border-b border-white/5 hover:bg-white/5 transition-all items-center">
+                  {/* Track button */}
+                  <div className="col-span-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (!tracked) trackKeyword(kw); }}
+                      disabled={trackingInProgress === kw.query}
+                      className={`p-1 rounded transition-all ${
+                        tracked
+                          ? 'text-yellow-400 cursor-default'
+                          : 'text-gray-600 hover:text-yellow-400'
+                      }`}
+                      title={tracked ? 'Already tracked' : 'Track for Road to #1'}
+                    >
+                      {trackingInProgress === kw.query
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Star className={`w-4 h-4 ${tracked ? 'fill-yellow-400' : ''}`} />
+                      }
+                    </button>
+                  </div>
+
+                  {/* Keyword */}
+                  <div className="col-span-4 min-w-0 cursor-pointer" onClick={() => setExpandedKeyword(expandedKeyword === kw.query ? null : kw.query)}>
+                    <p className="text-white text-sm truncate">{kw.query}</p>
+                  </div>
+
+                  <div className="col-span-2 text-right">
+                    <span className="text-blue-400 text-sm font-medium">{kw.clicks.toLocaleString()}</span>
+                  </div>
+                  <div className="col-span-2 text-right">
+                    <span className="text-purple-300 text-sm">{kw.impressions.toLocaleString()}</span>
+                  </div>
+                  <div className="col-span-1 text-right">
+                    <span className="text-gray-400 text-sm">{kw.ctr}%</span>
+                  </div>
+                  <div className="col-span-2 text-right flex items-center justify-end gap-2">
+                    <span className={`text-sm font-bold ${getPositionColor(kw.position)}`}>{kw.position}</span>
+                    <div className={`px-1.5 py-0.5 rounded text-xs border ${getPositionBg(kw.position)} ${getPositionColor(kw.position)}`}>
+                      {kw.position <= 3 ? '🏆' : kw.position <= 10 ? 'P1' : kw.position <= 20 ? 'P2' : kw.position <= 50 ? 'P3+' : '50+'}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <AnimatePresence>
-                {expandedKeyword === kw.query && (
-                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                    className="border-b border-white/10 bg-white/5 overflow-hidden">
-                    <div className="px-4 py-3 space-y-2">
-                      {kw.page && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-500 text-xs">Ranking URL:</span>
-                          <a href={kw.page} target="_blank" rel="noopener noreferrer"
-                            className="text-purple-400 text-xs hover:text-purple-300 truncate flex items-center gap-1">
-                            {kw.page} <ExternalLink className="w-3 h-3 shrink-0" />
-                          </a>
+                {/* Expanded */}
+                <AnimatePresence>
+                  {expandedKeyword === kw.query && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                      className="border-b border-white/10 bg-white/5 overflow-hidden">
+                      <div className="px-4 py-3 space-y-2">
+                        {kw.page && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-500 text-xs">Ranking URL:</span>
+                            <a href={kw.page} target="_blank" rel="noopener noreferrer"
+                              className="text-purple-400 text-xs hover:text-purple-300 truncate flex items-center gap-1">
+                              {kw.page} <ExternalLink className="w-3 h-3 shrink-0" />
+                            </a>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-4 text-xs flex-wrap">
+                          {kw.ctr < 2 && kw.position <= 10 && (
+                            <span className="text-yellow-400">Low CTR — improve title & description</span>
+                          )}
+                          {kw.position > 10 && kw.position <= 20 && (
+                            <span className="text-yellow-400">Striking distance — optimize to reach page 1</span>
+                          )}
+                          {kw.position > 20 && kw.impressions > 50 && (
+                            <span className="text-orange-400">High impressions, low ranking — opportunity keyword</span>
+                          )}
+                          {!tracked && (
+                            <button onClick={() => trackKeyword(kw)}
+                              className="flex items-center gap-1 text-yellow-400 hover:text-yellow-300 bg-yellow-500/10 px-2 py-0.5 rounded transition-all">
+                              <Star className="w-3 h-3" /> Track for Road to #1
+                            </button>
+                          )}
                         </div>
-                      )}
-                      <div className="flex items-center gap-6 text-xs flex-wrap">
-                        {kw.ctr < 2 && kw.position <= 10 && (
-                          <span className="text-yellow-400">Low CTR for this position — improve title/description</span>
-                        )}
-                        {kw.position > 10 && kw.position <= 20 && (
-                          <span className="text-yellow-400">Striking distance — optimize to reach page 1</span>
-                        )}
-                        {kw.position > 20 && kw.impressions > 50 && (
-                          <span className="text-orange-400">High impressions but low ranking — opportunity keyword</span>
-                        )}
                       </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
 
           {filteredKeywords.length === 0 && (
             <div className="text-center py-12">
@@ -490,45 +539,11 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
 
           {filteredKeywords.length > 200 && (
             <div className="text-center py-3 border-t border-white/10">
-              <p className="text-gray-500 text-xs">Showing top 200 of {filteredKeywords.length}. Use search to find specific terms.</p>
+              <p className="text-gray-500 text-xs">Showing top 200 of {filteredKeywords.length}. Use search to narrow down.</p>
             </div>
           )}
         </div>
       </div>
-
-      {/* Property Picker Modal */}
-      <AnimatePresence>
-        {showPropertyPicker && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowPropertyPicker(false)}>
-            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
-              className="bg-gradient-to-br from-gray-900 to-purple-900 rounded-2xl p-6 max-w-md w-full border border-white/20"
-              onClick={e => e.stopPropagation()}>
-              <h3 className="text-xl font-bold text-white mb-4">Select Search Console Property</h3>
-              <p className="text-gray-400 text-sm mb-4">Choose which property to pull keyword data from:</p>
-              {properties.length === 0 ? (
-                <p className="text-gray-500 text-sm py-4 text-center">No properties found.</p>
-              ) : (
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {properties.map(prop => (
-                    <button key={prop.site_url}
-                      onClick={() => { setShowPropertyPicker(false); syncKeywords(prop.site_url); }}
-                      className="w-full text-left p-3 bg-white/5 hover:bg-white/10 rounded-lg transition-all border border-white/10 hover:border-purple-500/30">
-                      <p className="text-white text-sm font-medium">{prop.site_url}</p>
-                      <p className="text-gray-500 text-xs mt-0.5 capitalize">{prop.permission_level}</p>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <button onClick={() => setShowPropertyPicker(false)}
-                className="w-full mt-4 bg-white/10 text-white px-4 py-2 rounded-lg text-sm hover:bg-white/20 transition-all">
-                Cancel
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
