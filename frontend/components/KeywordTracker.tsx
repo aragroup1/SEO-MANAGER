@@ -99,7 +99,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
     }
   }, [API_URL, websiteId]);
 
-  // Reset on website change
+  // Reset on website change - fetch directly to avoid stale closures
   useEffect(() => {
     setSnapshot(null);
     setTrackedKeywords([]);
@@ -109,9 +109,23 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
     setSearchQuery('');
     setExpandedKeyword(null);
     snapshotIdAtSync.current = null;
-    fetchKeywords();
-    fetchTracked();
-  }, [websiteId]);
+
+    // Fetch keywords directly (not via callback) to ensure correct websiteId
+    fetch(`${API_URL}/api/keywords/${websiteId}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.snapshot) { setSnapshot(data.snapshot); setError(''); }
+        else { setSnapshot(null); }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+
+    // Fetch tracked keywords
+    fetch(`${API_URL}/api/keywords/${websiteId}/tracked`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.tracked) setTrackedKeywords(data.tracked); })
+      .catch(() => {});
+  }, [websiteId, API_URL]);
 
   // Poll while syncing
   useEffect(() => {
