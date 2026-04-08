@@ -34,9 +34,15 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
   const [dismissed, setDismissed] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
-  useEffect(() => {
-    fetchIntegrationStatus();
-  }, [websiteId]);
+  const getIconForIntegration = (id: string) => {
+    switch (id) {
+      case 'google_search_console': return Search;
+      case 'google_analytics': return BarChart3;
+      case 'shopify': return ShoppingCart;
+      case 'wordpress': return Layers;
+      default: return Search;
+    }
+  };
 
   const fetchIntegrationStatus = async () => {
     try {
@@ -45,7 +51,19 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
       );
       if (response.ok) {
         const data = await response.json();
-        setIntegrations(data.integrations || getDefaultIntegrations());
+        const rawList = data.integrations || [];
+        if (rawList.length > 0) {
+          // Map icon components onto API data — API can't return React components
+          const mapped = rawList.map((i: any) => ({
+            ...i,
+            icon: getIconForIntegration(i.id),
+            relevantFor: i.relevantFor || [],
+            dataProvided: i.dataProvided || i.description || '',
+          }));
+          setIntegrations(mapped);
+        } else {
+          setIntegrations(getDefaultIntegrations());
+        }
       } else {
         setIntegrations(getDefaultIntegrations());
       }
@@ -56,6 +74,10 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchIntegrationStatus();
+  }, [websiteId]);
 
   const getDefaultIntegrations = (): IntegrationItem[] => [
     {
