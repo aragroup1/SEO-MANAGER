@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
 import asyncio
+import os
 
 from database import get_db, Website, TrackedKeyword
 
@@ -336,3 +337,73 @@ async def get_strategy(website_id: int, keyword_id: int, db: Session = Depends(g
         }
     except:
         return {"strategy": None, "notes": tk.notes}
+
+
+# ─── Search Volume Lookup (DataForSEO) ───
+
+@router.post("/{website_id}/search-volumes")
+async def get_search_volumes(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Fetch search volumes for a list of keywords using DataForSEO.
+    If DataForSEO is not configured, returns empty volumes."""
+    import base64
+
+    data = await request.json()
+    keywords = data.get("keywords", [])
+    country = data.get("country", "GB")
+
+    if not keywords:
+        return {"volumes": {}, "source": "none"}
+
+    DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN", "")
+    DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD", "")
+
+    if not DATAFORSEO_LOGIN or not DATAFORSEO_PASSWORD:
+        return {"volumes": {}, "source": "not_configured", "message": "DataForSEO credentials not set. Add DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD env vars."}
+
+    location_map = {
+        "GB": 2826, "US": 2840, "CA": 2124, "AU": 2036,
+        "DE": 2276, "FR": 2250, "IN": 2356, "BR": 2076,
+    }
+    location_code = location_map.get(country, 2826)
+
+    # Limit to 100 keywords per request to control costs
+    kw_batch = [k.strip() for k in keywords[:100] if k.strip()]
+
+    try:
+        auth = base64.b64encode(f"{DATAFORSEO_LOGIN}:{DATAFORSEO_PASSWORD}".encode()).decode()
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live",
+                headers={
+                    "Authorization": f"Basic {auth}",
+                    "Content-Type": "application/json"
+                },
+                json=[{
+                    "keywords": kw_batch,
+                    "location_code": location_code,
+                    "language_code": "en",
+                }]
+            )
+
+            if resp.status_code == 200:
+                api_data = resp.json()
+                results = api_data.get("tasks", [{}])[0].get("result", [])
+
+                volumes = {}
+                for r in results:
+                    if r and r.get("keyword"):
+                        volumes[r["keyword"].lower()] = {
+                            "search_volume": r.get("search_volume") or 0,
+                            "competition": round((r.get("competition") or 0) * 100),
+                            "cpc": round(r.get("cpc") or 0, 2),
+                        }
+
+                print(f"[DataForSEO] Got volumes for {len(volumes)}/{len(kw_batch)} keywords")
+                return {"volumes": volumes, "source": "dataforseo", "total": len(volumes)}
+            else:
+                print(f"[DataForSEO] Error: {resp.status_code} {resp.text[:300]}")
+                return {"volumes": {}, "source": "error", "message": f"DataForSEO API error: {resp.status_code}"}
+    except Exception as e:
+        print(f"[DataForSEO] Error: {e}")
+        return {"volumes": {}, "source": "error", "message": str(e)}
