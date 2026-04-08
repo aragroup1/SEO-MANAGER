@@ -147,9 +147,14 @@ async def list_gsc_properties(website_id: int) -> Dict[str, Any]:
 # ─────────────────────────────────────────────
 async def fetch_keyword_data(
     website_id: int,
-    days: int = 28,
+    days: int = 3,
     gsc_property: Optional[str] = None
 ) -> Dict[str, Any]:
+    """
+    Fetch keyword data from GSC.
+    days=3 gives the most recent rankings (latest available data).
+    days=7/28/90 gives aggregated data for that period.
+    """
     db = SessionLocal()
     try:
         website = db.query(Website).filter(Website.id == website_id).first()
