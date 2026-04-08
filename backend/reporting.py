@@ -11,26 +11,53 @@ from database import (
 )
 
 
-async def generate_report_data(website_id: int) -> Dict[str, Any]:
-    """Generate comprehensive report data for a website."""
+async def generate_report_data(website_id: int, month: str = None) -> Dict[str, Any]:
+    """Generate comprehensive report data for a website.
+    month: optional YYYY-MM string to filter data to that month."""
     db = SessionLocal()
     try:
         website = db.query(Website).filter(Website.id == website_id).first()
         if not website:
             return {"error": "Website not found"}
 
-        report = {"domain": website.domain, "site_type": website.site_type, "generated_at": datetime.utcnow().isoformat()}
+        # Parse month filter
+        month_start = None
+        month_end = None
+        if month:
+            try:
+                from calendar import monthrange
+                parts = month.split('-')
+                year, mo = int(parts[0]), int(parts[1])
+                month_start = datetime(year, mo, 1)
+                _, last_day = monthrange(year, mo)
+                month_end = datetime(year, mo, last_day, 23, 59, 59)
+            except:
+                pass
+
+        report = {
+            "domain": website.domain,
+            "site_type": website.site_type,
+            "generated_at": datetime.utcnow().isoformat(),
+            "report_month": month or "current",
+        }
 
         # ─── Audit Summary ───
-        latest_audit = db.query(AuditReport)\
-            .filter(AuditReport.website_id == website_id)\
-            .order_by(AuditReport.audit_date.desc()).first()
+        audit_query = db.query(AuditReport)\
+            .filter(AuditReport.website_id == website_id)
+        if month_start and month_end:
+            audit_query = audit_query.filter(
+                AuditReport.audit_date >= month_start,
+                AuditReport.audit_date <= month_end
+            )
+        latest_audit = audit_query.order_by(AuditReport.audit_date.desc()).first()
 
         previous_audit = None
         if latest_audit:
-            previous_audit = db.query(AuditReport)\
-                .filter(AuditReport.website_id == website_id, AuditReport.id != latest_audit.id)\
-                .order_by(AuditReport.audit_date.desc()).first()
+            prev_query = db.query(AuditReport)\
+                .filter(AuditReport.website_id == website_id, AuditReport.id != latest_audit.id)
+            if month_start:
+                prev_query = prev_query.filter(AuditReport.audit_date < month_start)
+            previous_audit = prev_query.order_by(AuditReport.audit_date.desc()).first()
 
         if latest_audit:
             findings = latest_audit.detailed_findings or {}
@@ -60,15 +87,22 @@ async def generate_report_data(website_id: int) -> Dict[str, Any]:
             report["audit"] = None
 
         # ─── Keywords Summary ───
-        latest_snapshot = db.query(KeywordSnapshot)\
-            .filter(KeywordSnapshot.website_id == website_id)\
-            .order_by(KeywordSnapshot.snapshot_date.desc()).first()
+        kw_query = db.query(KeywordSnapshot)\
+            .filter(KeywordSnapshot.website_id == website_id)
+        if month_start and month_end:
+            kw_query = kw_query.filter(
+                KeywordSnapshot.snapshot_date >= month_start,
+                KeywordSnapshot.snapshot_date <= month_end
+            )
+        latest_snapshot = kw_query.order_by(KeywordSnapshot.snapshot_date.desc()).first()
 
         prev_snapshot = None
         if latest_snapshot:
-            prev_snapshot = db.query(KeywordSnapshot)\
-                .filter(KeywordSnapshot.website_id == website_id, KeywordSnapshot.id != latest_snapshot.id)\
-                .order_by(KeywordSnapshot.snapshot_date.desc()).first()
+            prev_kw_query = db.query(KeywordSnapshot)\
+                .filter(KeywordSnapshot.website_id == website_id, KeywordSnapshot.id != latest_snapshot.id)
+            if month_start:
+                prev_kw_query = prev_kw_query.filter(KeywordSnapshot.snapshot_date < month_start)
+            prev_snapshot = prev_kw_query.order_by(KeywordSnapshot.snapshot_date.desc()).first()
 
         if latest_snapshot:
             keywords = latest_snapshot.keyword_data or []
