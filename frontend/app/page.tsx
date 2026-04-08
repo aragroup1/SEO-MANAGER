@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, TrendingUp, Brain, Zap, Globe, ShoppingCart, Bot,
   CheckCircle, XCircle, AlertCircle, Settings, Link2,
-  BarChart3, Calendar, Users, FileSearch, Sparkles,
+  BarChart3, Calendar, Users, FileSearch, FileText, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity,
   ChevronDown, Menu, X, MessageSquare
 } from 'lucide-react';
@@ -19,6 +19,7 @@ import WebsiteManager from '@/components/WebsiteManager';
 import KeywordTracker from '@/components/KeywordTracker';
 import GEODashboard from '@/components/GEODashboard';
 import AIStrategist from '@/components/AIStrategist';
+import ReportingDashboard from '@/components/ReportingDashboard';
 import SettingsPanel from '@/components/SettingsPanel';
 
 interface Website {
@@ -78,7 +79,7 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'settings'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
@@ -93,6 +94,8 @@ export default function Dashboard() {
     { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
     { id: 'content', label: 'Content', icon: Calendar },
     { id: 'competitors', label: 'Competitors', icon: Users },
+    { id: 'divider3', label: '', icon: null },
+    { id: 'reports', label: 'Reports', icon: FileText },
   ];
 
   return (
@@ -356,6 +359,12 @@ export default function Dashboard() {
               {activeTab === 'strategist' && selectedWebsite && (
                 <motion.div key={`strategist-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
                   <AIStrategist websiteId={selectedWebsite} />
+                </motion.div>
+              )}
+
+              {activeTab === 'reports' && selectedWebsite && (
+                <motion.div key={`reports-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                  <ReportingDashboard websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
