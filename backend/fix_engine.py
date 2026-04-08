@@ -853,6 +853,70 @@ class WordPressFixEngine:
 
         return fixes
 
+    # ─── Apply fixes via WP REST API ───
+
+    async def _api_put(self, endpoint: str, data: Dict) -> Optional[Any]:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                kwargs = {"json": data}
+                if self.auth:
+                    kwargs["auth"] = self.auth
+                resp = await client.post(f"{self.api_base}/{endpoint}", **kwargs)
+                if resp.status_code in [200, 201]:
+                    return resp.json()
+                print(f"[WP API] PUT {endpoint} failed: {resp.status_code} {resp.text[:200]}")
+                return None
+        except Exception as e:
+            print(f"[WP API] PUT {endpoint} error: {e}")
+            return None
+
+    async def apply_fix(self, fix: ProposedFix) -> Tuple[bool, str]:
+        try:
+            if fix.fix_type == "alt_text":
+                return await self._apply_wp_alt_text(fix)
+            elif fix.fix_type == "meta_description":
+                return await self._apply_wp_excerpt(fix)
+            elif fix.fix_type == "thin_content":
+                return await self._apply_wp_content(fix)
+            else:
+                return False, "Fix type '" + fix.fix_type + "' not yet supported for WordPress"
+        except Exception as e:
+            return False, str(e)
+
+    async def _apply_wp_alt_text(self, fix: ProposedFix) -> Tuple[bool, str]:
+        resource_id = fix.resource_id
+        endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+        data = await self._api_get(endpoint)
+        if not data:
+            return False, "Could not fetch " + fix.resource_type
+        from bs4 import BeautifulSoup
+        content = data.get("content", {}).get("raw", data.get("content", {}).get("rendered", ""))
+        soup = BeautifulSoup(content, 'html.parser')
+        for img in soup.find_all('img'):
+            if not img.get('alt', '').strip():
+                img['alt'] = fix.proposed_value
+                break
+        result = await self._api_put(endpoint, {"content": str(soup)})
+        if result:
+            return True, "Alt text updated in WordPress"
+        return False, "WordPress API rejected the update"
+
+    async def _apply_wp_excerpt(self, fix: ProposedFix) -> Tuple[bool, str]:
+        resource_id = fix.resource_id
+        endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+        result = await self._api_put(endpoint, {"excerpt": fix.proposed_value})
+        if result:
+            return True, "Excerpt/meta description updated"
+        return False, "WordPress API rejected the update"
+
+    async def _apply_wp_content(self, fix: ProposedFix) -> Tuple[bool, str]:
+        resource_id = fix.resource_id
+        endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+        result = await self._api_put(endpoint, {"content": fix.proposed_value})
+        if result:
+            return True, "Content updated in WordPress"
+        return False, "WordPress API rejected the update"
+
 
 # ─────────────────────────────────────────
 #  Main orchestrator
@@ -981,7 +1045,30 @@ async def apply_approved_fix(fix_id: int) -> Dict[str, Any]:
             success, message = await engine.apply_fix(fix)
 
         elif fix.platform == "wordpress":
-            success, message = False, "WordPress auto-apply coming soon"
+            integration = db.query(Integration).filter(
+                Integration.website_id == website.id,
+                Integration.integration_type == "wordpress",
+                Integration.status == "active"
+            ).first()
+
+            wp_url = website.domain
+            username = ""
+            app_password = ""
+
+            if integration:
+                app_password = integration.access_token or ""
+                config = integration.config or {}
+                username = config.get("username", "")
+                wp_url = config.get("wp_url", wp_url)
+
+            if not app_password:
+                fix.status = "failed"
+                fix.error_message = "No WordPress credentials configured"
+                db.commit()
+                return {"error": "WordPress not connected. Add app password in integrations."}
+
+            engine = WordPressFixEngine(wp_url, username=username, app_password=app_password)
+            success, message = await engine.apply_fix(fix)
 
         if success:
             fix.status = "applied"
