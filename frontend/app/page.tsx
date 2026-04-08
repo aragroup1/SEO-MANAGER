@@ -17,6 +17,7 @@ import CompetitorAnalysis from '@/components/CompetitorAnalysis';
 import AuditDashboard from '@/components/AuditDashboard';
 import WebsiteManager from '@/components/WebsiteManager';
 import KeywordTracker from '@/components/KeywordTracker';
+import GEODashboard from '@/components/GEODashboard';
 import SettingsPanel from '@/components/SettingsPanel';
 
 interface Website {
@@ -76,7 +77,7 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'settings'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'ai-search', 'settings'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
@@ -344,17 +345,9 @@ export default function Dashboard() {
                 </motion.div>
               )}
 
-              {activeTab === 'ai-search' && (
-                <motion.div key="ai-search" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
-                  <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-                    <div className="flex items-center gap-3 mb-4">
-                      <Brain className="w-6 h-6 text-purple-400" />
-                      <h2 className="text-xl font-bold text-white">AI Search Optimization</h2>
-                    </div>
-                    <p className="text-purple-300">
-                      Track how your site appears in AI-generated search results (ChatGPT, Perplexity, Google AI Overviews). Coming soon.
-                    </p>
-                  </div>
+              {activeTab === 'ai-search' && selectedWebsite && (
+                <motion.div key={`geo-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                  <GEODashboard websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
