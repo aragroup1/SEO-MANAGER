@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 import asyncio
-
 from database import get_db, Website
 
 router = APIRouter(prefix="/api/geo", tags=["geo"])
@@ -65,3 +64,38 @@ async def test_citation(website_id: int, request: Request, db: Session = Depends
     from geo_engine import test_ai_citation
     result = await test_ai_citation(website.domain, query)
     return result
+
+
+def _run_geo_fix_scan(website_id: int):
+    """Background task for GEO fix scanning."""
+    try:
+        from geo_fix_engine import scan_and_generate_geo_fixes
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(scan_and_generate_geo_fixes(website_id))
+        loop.close()
+        print(f"[GEO Fix] Scan completed: {result}")
+    except Exception as e:
+        print(f"[GEO Fix] Scan failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@router.post("/{website_id}/scan-fixes")
+async def scan_geo_fixes(
+    website_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Scan website for GEO optimization opportunities and generate fix proposals.
+    Fixes go into the approval queue — nothing is auto-applied."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    background_tasks.add_task(_run_geo_fix_scan, website_id)
+
+    return {
+        "status": "scanning",
+        "message": f"Scanning {website.domain} for GEO optimization opportunities. Fixes will appear in the approval queue."
+    }
