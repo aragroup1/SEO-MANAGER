@@ -362,6 +362,9 @@ app.include_router(fix_router)
 from keyword_routes import router as keyword_router
 app.include_router(keyword_router)
 
+from geo_routes import router as geo_router
+app.include_router(geo_router)
+
 # --- Startup ---
 
 @app.on_event("startup")
