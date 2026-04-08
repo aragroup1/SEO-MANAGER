@@ -19,21 +19,23 @@ async def get_report(website_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{website_id}/pdf")
-async def download_pdf_report(website_id: int, db: Session = Depends(get_db)):
-    """Generate and download a PDF SEO report."""
+async def download_pdf_report(website_id: int, month: Optional[str] = None, db: Session = Depends(get_db)):
+    """Generate and download a PDF SEO report.
+    Optional ?month=2026-04 to get report for a specific month."""
     from reporting import generate_report_data
 
     website = db.query(Website).filter(Website.id == website_id).first()
     if not website:
         raise HTTPException(status_code=404, detail="Website not found")
 
-    report_data = await generate_report_data(website_id)
+    report_data = await generate_report_data(website_id, month=month)
     if "error" in report_data:
         raise HTTPException(status_code=500, detail=report_data["error"])
 
     pdf_bytes = _generate_pdf(report_data)
 
-    filename = f"seo-report-{website.domain}-{report_data.get('generated_at', '')[:10]}.pdf"
+    month_label = month or report_data.get('generated_at', '')[:10]
+    filename = f"seo-report-{website.domain}-{month_label}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
