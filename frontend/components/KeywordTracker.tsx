@@ -100,6 +100,11 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [researchResults, setResearchResults] = useState<any[]>([]);
   const [researching, setResearching] = useState(false);
 
+  // Search volume data from DataForSEO
+  const [searchVolumes, setSearchVolumes] = useState<Record<string, { search_volume: number; competition: number; cpc: number }>>({});
+  const [volumeSource, setVolumeSource] = useState<string>('');
+  const [loadingVolumes, setLoadingVolumes] = useState(false);
+
   const snapshotIdAtSync = useRef<number | null>(null);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -149,6 +154,27 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
       })
       .catch(() => {});
   }, [websiteId, API_URL]);
+
+  // Fetch search volumes from DataForSEO when snapshot loads
+  useEffect(() => {
+    if (!snapshot?.keywords?.length) return;
+    setLoadingVolumes(true);
+    const topKeywords = snapshot.keywords.slice(0, 100).map(k => k.query);
+    fetch(`${API_URL}/api/keywords/${websiteId}/search-volumes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keywords: topKeywords, country: 'GB' })
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.volumes) {
+          setSearchVolumes(data.volumes);
+          setVolumeSource(data.source || '');
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingVolumes(false));
+  }, [snapshot?.id, API_URL, websiteId]);
 
   // Poll while syncing
   useEffect(() => {
@@ -324,35 +350,41 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const SortIcon = ({ field }: { field: SortField }) => sortField !== field ? <ArrowUpDown className="w-3 h-3 text-gray-600" /> : sortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-purple-400" /> : <ArrowDown className="w-3 h-3 text-purple-400" />;
 
   // ─── Simple SVG chart for keyword history ───
-  const HistoryChart = ({ data, metric }: { data: HistoryPoint[]; metric: 'position' | 'clicks' | 'impressions' }) => {
+  const HistoryChart = ({ data, metric, invertY = false }: { data: HistoryPoint[]; metric: 'position' | 'clicks' | 'impressions'; invertY?: boolean }) => {
     if (!data.length) return null;
     const values = data.map(d => d[metric] as number);
     const maxVal = Math.max(...values, 1);
     const minVal = Math.min(...values, 0);
     const range = maxVal - minVal || 1;
     const w = 600, h = 120, pad = 30;
-    const isPosition = metric === 'position';
+    // For position: 1 should be at TOP, higher numbers at BOTTOM
+    // invertY=true means "up is good" — used for position where lower number = better
+    const shouldInvert = metric === 'position' || invertY;
 
     const points = data.map((d, i) => {
       const x = pad + (i / (data.length - 1 || 1)) * (w - pad * 2);
       const val = d[metric] as number;
-      // For position, invert Y so lower position = higher on chart
-      const y = isPosition
+      // When shouldInvert: higher values go DOWN (bottom), lower values go UP (top)
+      // This means position 1 = top of chart, position 50 = bottom
+      const y = shouldInvert
         ? pad + ((val - minVal) / range) * (h - pad * 2)
         : pad + (1 - (val - minVal) / range) * (h - pad * 2);
       return `${x},${y}`;
     }).join(' ');
 
     const color = metric === 'position' ? '#a855f7' : metric === 'clicks' ? '#3b82f6' : '#8b5cf6';
+    // Labels: for position chart, top label = best (min), bottom = worst (max)
+    const topLabel = shouldInvert ? minVal : maxVal;
+    const bottomLabel = shouldInvert ? maxVal : minVal;
 
     return (
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-28" preserveAspectRatio="none">
         <polyline fill="none" stroke={color} strokeWidth="2" points={points} />
-        {/* Start and end labels */}
         <text x={pad} y={h - 5} fill="#666" fontSize="10">{data[0].date.slice(5)}</text>
         <text x={w - pad} y={h - 5} fill="#666" fontSize="10" textAnchor="end">{data[data.length - 1].date.slice(5)}</text>
-        <text x={pad - 5} y={pad + 4} fill="#888" fontSize="10" textAnchor="end">{isPosition ? minVal : maxVal}</text>
-        <text x={pad - 5} y={h - pad + 4} fill="#888" fontSize="10" textAnchor="end">{isPosition ? maxVal : minVal}</text>
+        <text x={pad - 5} y={pad + 4} fill="#888" fontSize="10" textAnchor="end">{topLabel}</text>
+        <text x={pad - 5} y={h - pad + 4} fill="#888" fontSize="10" textAnchor="end">{bottomLabel}</text>
+        {shouldInvert && <text x={w - 5} y={pad + 4} fill="#4ade80" fontSize="9" textAnchor="end">better ↑</text>}
       </svg>
     );
   };
@@ -528,6 +560,27 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
 
       {subTab === 'rankings' && (<>
 
+      {/* Keyword Ranking Trend — at top */}
+      {snapshotHistory.length > 1 && (
+        <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
+          <h3 className="text-white font-medium mb-3 text-sm">Keyword Ranking Trend</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white/5 rounded-lg p-3">
+              <p className="text-xs text-gray-400 mb-2">Total Keywords Ranking</p>
+              <HistoryChart data={snapshotHistory.map(s => ({ date: s.date, clicks: s.keywords, impressions: 0, ctr: 0, position: 0 }))} metric="clicks" />
+            </div>
+            <div className="bg-white/5 rounded-lg p-3">
+              <p className="text-xs text-gray-400 mb-2">Total Clicks</p>
+              <HistoryChart data={snapshotHistory.map(s => ({ date: s.date, clicks: s.clicks, impressions: 0, ctr: 0, position: 0 }))} metric="clicks" />
+            </div>
+            <div className="bg-white/5 rounded-lg p-3">
+              <p className="text-xs text-gray-400 mb-2">Avg Position (↑ = better)</p>
+              <HistoryChart data={snapshotHistory.map(s => ({ date: s.date, clicks: 0, impressions: 0, ctr: 0, position: s.position }))} metric="position" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
@@ -633,23 +686,40 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
 
       {/* Keyword Table */}
       <div className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden">
-        <div className="grid grid-cols-12 gap-2 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400">
-          <div className="col-span-1"></div>
-          <div className="col-span-4 flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleSort('query')}>Keyword <SortIcon field="query" /></div>
-          <div className="col-span-1 text-center">Country</div>
-          <div className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('clicks')}>Clicks <SortIcon field="clicks" /></div>
-          <div className="col-span-1 flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('impressions')}>Impr <SortIcon field="impressions" /></div>
-          <div className="col-span-1 flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('ctr')}>CTR <SortIcon field="ctr" /></div>
-          <div className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('position')}>Position <SortIcon field="position" /></div>
+        {/* DataForSEO status */}
+        {volumeSource && (
+          <div className="px-4 py-1.5 border-b border-white/5 flex items-center gap-2">
+            {volumeSource === 'dataforseo' ? (
+              <span className="text-green-400 text-[10px] flex items-center gap-1">● Search volumes from DataForSEO ({Object.keys(searchVolumes).length} keywords)</span>
+            ) : volumeSource === 'not_configured' ? (
+              <span className="text-yellow-400 text-[10px]">⚠ Add DATAFORSEO_LOGIN + DATAFORSEO_PASSWORD env vars for search volume data</span>
+            ) : volumeSource === 'error' ? (
+              <span className="text-red-400 text-[10px]">⚠ DataForSEO error — check credentials</span>
+            ) : null}
+            {loadingVolumes && <Loader2 className="w-3 h-3 text-purple-400 animate-spin" />}
+          </div>
+        )}
+
+        <div className="grid grid-cols-14 gap-1 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400" style={{ gridTemplateColumns: '2.5rem 1fr 3rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}>
+          <div></div>
+          <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleSort('query')}>Keyword <SortIcon field="query" /></div>
+          <div className="text-center">🌍</div>
+          <div className="text-right text-purple-300">Vol</div>
+          <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('clicks')}>Clicks <SortIcon field="clicks" /></div>
+          <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('impressions')}>Impr <SortIcon field="impressions" /></div>
+          <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('ctr')}>CTR <SortIcon field="ctr" /></div>
+          <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('position')}>Position <SortIcon field="position" /></div>
         </div>
 
         <div className="max-h-[600px] overflow-y-auto">
           {filteredKeywords.slice(0, 200).map((kw, idx) => {
             const tracked = isTracked(kw.query);
+            const vol = searchVolumes[kw.query.toLowerCase()];
             return (
-              <div key={kw.query + idx} className="grid grid-cols-12 gap-2 px-4 py-2.5 border-b border-white/5 hover:bg-white/5 transition-all items-center cursor-pointer"
+              <div key={kw.query + idx} className="grid gap-1 px-4 py-2.5 border-b border-white/5 hover:bg-white/5 transition-all items-center cursor-pointer"
+                style={{ gridTemplateColumns: '2.5rem 1fr 3rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}
                 onClick={() => openKeywordDetail(kw)}>
-                <div className="col-span-1">
+                <div>
                   <button onClick={e => { e.stopPropagation(); if (!tracked) trackKeyword(kw); }}
                     disabled={trackingInProgress === kw.query}
                     className={`p-1 rounded transition-all ${tracked ? 'text-yellow-400' : 'text-gray-600 hover:text-yellow-400'}`}
@@ -657,18 +727,25 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
                     {trackingInProgress === kw.query ? <Loader2 className="w-4 h-4 animate-spin" /> : <Star className={`w-4 h-4 ${tracked ? 'fill-yellow-400' : ''}`} />}
                   </button>
                 </div>
-                <div className="col-span-4 min-w-0"><p className="text-white text-sm truncate">{kw.query}</p></div>
-                <div className="col-span-1 text-center">
+                <div className="min-w-0"><p className="text-white text-sm truncate">{kw.query}</p></div>
+                <div className="text-center">
                   {kw.country ? (
-                    <span className="text-xs" title={kw.country}>{getFlag(kw.country)} {kw.country}</span>
-                  ) : <span className="text-gray-600 text-xs">—</span>}
+                    <span className="text-[10px]" title={kw.country}>{getFlag(kw.country)}</span>
+                  ) : <span className="text-gray-600 text-[10px]">—</span>}
                 </div>
-                <div className="col-span-2 text-right"><span className="text-blue-400 text-sm font-medium">{kw.clicks.toLocaleString()}</span></div>
-                <div className="col-span-1 text-right"><span className="text-purple-300 text-sm">{kw.impressions.toLocaleString()}</span></div>
-                <div className="col-span-1 text-right"><span className="text-gray-400 text-sm">{kw.ctr}%</span></div>
-                <div className="col-span-2 text-right flex items-center justify-end gap-2">
+                <div className="text-right">
+                  {vol ? (
+                    <span className="text-purple-300 text-xs font-medium">{vol.search_volume.toLocaleString()}</span>
+                  ) : (
+                    <span className="text-gray-700 text-xs">—</span>
+                  )}
+                </div>
+                <div className="text-right"><span className="text-blue-400 text-sm font-medium">{kw.clicks.toLocaleString()}</span></div>
+                <div className="text-right"><span className="text-purple-300 text-xs">{kw.impressions.toLocaleString()}</span></div>
+                <div className="text-right"><span className="text-gray-400 text-xs">{kw.ctr}%</span></div>
+                <div className="text-right flex items-center justify-end gap-1.5">
                   <span className={`text-sm font-bold ${posColor(kw.position)}`}>{kw.position}</span>
-                  <div className={`px-1.5 py-0.5 rounded text-xs border ${posBg(kw.position)} ${posColor(kw.position)}`}>
+                  <div className={`px-1 py-0.5 rounded text-[10px] border ${posBg(kw.position)} ${posColor(kw.position)}`}>
                     {kw.position <= 3 ? '🏆' : kw.position <= 10 ? 'P1' : kw.position <= 20 ? 'P2' : kw.position <= 50 ? 'P3+' : '50+'}
                   </div>
                 </div>
@@ -681,23 +758,6 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
       </div>
 
       </>)}
-
-      {/* Keyword Trend Chart (show on rankings tab, after table) */}
-      {subTab === 'rankings' && snapshotHistory.length > 1 && (
-        <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
-          <h3 className="text-white font-medium mb-3 text-sm">Keyword Ranking Trend</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white/5 rounded-lg p-3">
-              <p className="text-xs text-gray-400 mb-2">Total Keywords Ranking</p>
-              <HistoryChart data={snapshotHistory.map(s => ({ date: s.date, clicks: s.keywords, impressions: 0, ctr: 0, position: 0 }))} metric="clicks" />
-            </div>
-            <div className="bg-white/5 rounded-lg p-3">
-              <p className="text-xs text-gray-400 mb-2">Total Clicks</p>
-              <HistoryChart data={snapshotHistory.map(s => ({ date: s.date, clicks: s.clicks, impressions: 0, ctr: 0, position: 0 }))} metric="clicks" />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Keyword Detail Panel (slide-over) */}
       <AnimatePresence>
@@ -740,6 +800,31 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
                     <p className="text-xs text-gray-400 mt-1">CTR</p>
                   </div>
                 </div>
+
+                {/* Search Volume from DataForSEO */}
+                {(() => {
+                  const sv = searchVolumes[selectedKeyword.query.toLowerCase()];
+                  if (!sv) return null;
+                  return (
+                    <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                      <p className="text-purple-400 text-xs font-medium mb-2">Search Volume Data (DataForSEO)</p>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="text-center">
+                          <p className="text-xl font-bold text-white">{sv.search_volume.toLocaleString()}</p>
+                          <p className="text-[10px] text-gray-400">Monthly Volume</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xl font-bold text-orange-400">{sv.competition}</p>
+                          <p className="text-[10px] text-gray-400">Competition</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xl font-bold text-green-400">${sv.cpc}</p>
+                          <p className="text-[10px] text-gray-400">CPC</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Countries */}
                 {selectedKeyword.countries && selectedKeyword.countries.length > 0 && (
