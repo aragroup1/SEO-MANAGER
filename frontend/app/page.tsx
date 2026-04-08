@@ -7,7 +7,7 @@ import {
   Search, TrendingUp, Brain, Zap, Globe, ShoppingCart, Bot,
   CheckCircle, XCircle, AlertCircle, Settings, Link2,
   BarChart3, Calendar, Users, FileSearch, FileText, Sparkles,
-  Shield, Gauge, Award, Target, Rocket, Eye, Activity,
+  Shield, Gauge, Award, Target, Rocket, Eye, Activity, Trophy,
   ChevronDown, Menu, X, MessageSquare
 } from 'lucide-react';
 import ApprovalQueue from '@/components/ApprovalQueue';
@@ -17,6 +17,7 @@ import CompetitorAnalysis from '@/components/CompetitorAnalysis';
 import AuditDashboard from '@/components/AuditDashboard';
 import WebsiteManager from '@/components/WebsiteManager';
 import KeywordTracker from '@/components/KeywordTracker';
+import RoadToOne from '@/components/RoadToOne';
 import GEODashboard from '@/components/GEODashboard';
 import AIStrategist from '@/components/AIStrategist';
 import ReportingDashboard from '@/components/ReportingDashboard';
@@ -79,7 +80,7 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'road-to-one', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
@@ -88,6 +89,7 @@ export default function Dashboard() {
     { id: 'divider1', label: '', icon: null },
     { id: 'audit', label: 'Site Audit', icon: Activity },
     { id: 'keywords', label: 'Keywords', icon: Search },
+    { id: 'road-to-one', label: 'Road to #1', icon: Trophy },
     { id: 'issues', label: 'Issues & Fixes', icon: Sparkles },
     { id: 'divider2', label: '', icon: null },
     { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
@@ -326,6 +328,12 @@ export default function Dashboard() {
               {activeTab === 'keywords' && selectedWebsite && (
                 <motion.div key={`keywords-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
                   <KeywordTracker key={`kt-${selectedWebsite}`} websiteId={selectedWebsite} />
+                </motion.div>
+              )}
+
+              {activeTab === 'road-to-one' && selectedWebsite && (
+                <motion.div key={`r2o-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                  <RoadToOne websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
