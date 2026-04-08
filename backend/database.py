@@ -208,6 +208,7 @@ class TrackedKeyword(Base):
 
     # Target
     target_position = Column(Integer, default=1)
+    target_url = Column(String, nullable=True)  # User-selected URL to rank for this keyword
     notes = Column(Text, nullable=True)
 
     # Status
