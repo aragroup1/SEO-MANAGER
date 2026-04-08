@@ -371,6 +371,30 @@ app.include_router(strategist_router)
 from report_routes import router as report_router
 app.include_router(report_router)
 
+# --- AI Overseer ---
+
+@app.post("/api/overseer/{website_id}/run")
+async def run_overseer(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Run the AI Overseer for a specific website. Does: audit → keywords → GEO scan → fixes → strategy refresh."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from ai_overseer import run_overseer_background
+    background_tasks.add_task(run_overseer_background, website_id)
+
+    return {
+        "status": "running",
+        "message": f"AI Overseer started for {website.domain}. Running: audit → keywords → GEO scan → fixes → strategy refresh. Check Issues & Fixes for results."
+    }
+
+@app.post("/api/overseer/run-all")
+async def run_overseer_all(background_tasks: BackgroundTasks):
+    """Run the AI Overseer for ALL websites."""
+    from ai_overseer import run_overseer_background
+    background_tasks.add_task(run_overseer_background, None)
+    return {"status": "running", "message": "AI Overseer started for all websites."}
+
 # --- Startup ---
 
 @app.on_event("startup")
