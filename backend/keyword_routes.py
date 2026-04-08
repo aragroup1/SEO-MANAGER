@@ -390,7 +390,14 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
 
             if resp.status_code == 200:
                 api_data = resp.json()
-                results = api_data.get("tasks", [{}])[0].get("result", [])
+                # Check for task-level errors
+                tasks = api_data.get("tasks", [])
+                if tasks and tasks[0].get("status_code") != 20000:
+                    error_msg = tasks[0].get("status_message", "Unknown task error")
+                    print(f"[DataForSEO] Task error: {tasks[0].get('status_code')} {error_msg}")
+                    return {"volumes": {}, "source": "error", "message": f"DataForSEO: {error_msg}"}
+
+                results = tasks[0].get("result", []) if tasks else []
 
                 volumes = {}
                 for r in results:
@@ -403,9 +410,42 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
 
                 print(f"[DataForSEO] Got volumes for {len(volumes)}/{len(kw_batch)} keywords")
                 return {"volumes": volumes, "source": "dataforseo", "total": len(volumes)}
+            elif resp.status_code == 401:
+                print(f"[DataForSEO] Auth failed (401). Check login email and API password (not account password).")
+                return {"volumes": {}, "source": "error", "message": "DataForSEO authentication failed. Use your API password from dataforseo.com/account, not your login password."}
             else:
-                print(f"[DataForSEO] Error: {resp.status_code} {resp.text[:300]}")
-                return {"volumes": {}, "source": "error", "message": f"DataForSEO API error: {resp.status_code}"}
+                error_text = resp.text[:300]
+                print(f"[DataForSEO] Error: {resp.status_code} {error_text}")
+                return {"volumes": {}, "source": "error", "message": f"DataForSEO API error {resp.status_code}: {error_text}"}
     except Exception as e:
         print(f"[DataForSEO] Error: {e}")
         return {"volumes": {}, "source": "error", "message": str(e)}
+
+
+@router.get("/test-dataforseo")
+async def test_dataforseo():
+    """Quick test to check if DataForSEO credentials work."""
+    import base64
+    import httpx
+
+    login = os.getenv("DATAFORSEO_LOGIN", "")
+    password = os.getenv("DATAFORSEO_PASSWORD", "")
+
+    if not login or not password:
+        return {"status": "not_configured", "login_set": bool(login), "password_set": bool(password)}
+
+    try:
+        auth = base64.b64encode(f"{login}:{password}".encode()).decode()
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live",
+                headers={"Authorization": f"Basic {auth}", "Content-Type": "application/json"},
+                json=[{"keywords": ["test"], "location_code": 2826, "language_code": "en"}]
+            )
+            return {
+                "status_code": resp.status_code,
+                "response": resp.json() if resp.status_code == 200 else resp.text[:500],
+                "login_used": login[:3] + "***",
+            }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
