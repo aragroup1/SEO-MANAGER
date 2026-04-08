@@ -10,8 +10,9 @@ from database import get_db, Website, TrackedKeyword
 router = APIRouter(prefix="/api/keywords", tags=["keywords"])
 
 
-def _run_keyword_sync(website_id: int, days: int = 28):
-    """Background task to sync keywords from Search Console."""
+def _run_keyword_sync(website_id: int, days: int = 3):
+    """Background task to sync keywords from Search Console.
+    days=3 gives latest rankings, days=28 gives monthly aggregate."""
     try:
         from search_console import fetch_keyword_data
         loop = asyncio.new_event_loop()
@@ -64,7 +65,7 @@ def _update_tracked_keywords(website_id: int, keywords: list):
 @router.post("/{website_id}/sync")
 async def sync_keywords(
     website_id: int,
-    days: int = 28,
+    days: int = 3,
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
@@ -241,3 +242,71 @@ async def research_keywords(website_id: int, request: Request, db: Session = Dep
     )
 
     return result
+
+
+# ─── Road to #1 Strategy ───
+
+def _run_strategy_task(website_id: int, keyword_id: int):
+    """Background task to generate Road to #1 strategy."""
+    try:
+        from road_to_one import generate_road_to_one_strategy
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(generate_road_to_one_strategy(website_id, keyword_id))
+        loop.close()
+        print("[RoadTo1] Strategy completed for keyword_id " + str(keyword_id))
+    except Exception as e:
+        print("[RoadTo1] Strategy failed: " + str(e))
+        import traceback
+        traceback.print_exc()
+
+
+@router.post("/{website_id}/track/{keyword_id}/strategy")
+async def generate_strategy(
+    website_id: int,
+    keyword_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Generate a Road to #1 strategy for a tracked keyword."""
+    tk = db.query(TrackedKeyword).filter(
+        TrackedKeyword.id == keyword_id,
+        TrackedKeyword.website_id == website_id
+    ).first()
+    if not tk:
+        raise HTTPException(status_code=404, detail="Tracked keyword not found")
+
+    background_tasks.add_task(_run_strategy_task, website_id, keyword_id)
+
+    return {
+        "status": "generating",
+        "message": "Generating Road to #1 strategy for '" + tk.keyword + "'. Analyzing competitors — takes 30-60 seconds."
+    }
+
+
+@router.get("/{website_id}/track/{keyword_id}/strategy")
+async def get_strategy(website_id: int, keyword_id: int, db: Session = Depends(get_db)):
+    """Get the saved strategy for a tracked keyword."""
+    import json as json_mod
+    tk = db.query(TrackedKeyword).filter(
+        TrackedKeyword.id == keyword_id,
+        TrackedKeyword.website_id == website_id
+    ).first()
+    if not tk:
+        raise HTTPException(status_code=404, detail="Tracked keyword not found")
+
+    if not tk.notes:
+        return {"strategy": None, "message": "No strategy generated yet."}
+
+    try:
+        data = json_mod.loads(tk.notes)
+        return {
+            "keyword": tk.keyword,
+            "current_position": tk.current_position,
+            "strategy": data.get("strategy"),
+            "competitors": data.get("competitors", []),
+            "your_page": data.get("your_page"),
+            "generated_at": data.get("generated_at"),
+        }
+    except:
+        return {"strategy": None, "notes": tk.notes}
