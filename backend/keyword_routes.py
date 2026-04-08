@@ -402,10 +402,16 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
                 volumes = {}
                 for r in results:
                     if r and r.get("keyword"):
+                        try:
+                            comp = float(r.get("competition") or 0)
+                            cpc = float(r.get("cpc") or 0)
+                        except (ValueError, TypeError):
+                            comp = 0
+                            cpc = 0
                         volumes[r["keyword"].lower()] = {
                             "search_volume": r.get("search_volume") or 0,
-                            "competition": round((r.get("competition") or 0) * 100),
-                            "cpc": round(r.get("cpc") or 0, 2),
+                            "competition": round(comp * 100),
+                            "cpc": round(cpc, 2),
                         }
 
                 print(f"[DataForSEO] Got volumes for {len(volumes)}/{len(kw_batch)} keywords")
