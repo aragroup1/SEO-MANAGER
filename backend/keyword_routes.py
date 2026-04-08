@@ -124,15 +124,40 @@ async def get_tracked_keywords(website_id: int, db: Session = Depends(get_db)):
                 "current_impressions": tk.current_impressions,
                 "current_ctr": tk.current_ctr,
                 "ranking_url": tk.ranking_url,
+                "target_url": tk.target_url,
                 "target_position": tk.target_position,
                 "notes": tk.notes,
                 "status": tk.status,
+                "has_strategy": bool(tk.notes and '"strategy"' in (tk.notes or '')),
                 "created_at": tk.created_at.isoformat() if tk.created_at else None,
                 "updated_at": tk.updated_at.isoformat() if tk.updated_at else None,
             }
             for tk in tracked
         ]
     }
+
+
+@router.put("/{website_id}/track/{keyword_id}")
+async def update_tracked_keyword(website_id: int, keyword_id: int, request: Request, db: Session = Depends(get_db)):
+    """Update a tracked keyword (target URL, notes, status)."""
+    data = await request.json()
+    tk = db.query(TrackedKeyword).filter(
+        TrackedKeyword.id == keyword_id,
+        TrackedKeyword.website_id == website_id
+    ).first()
+    if not tk:
+        raise HTTPException(status_code=404, detail="Tracked keyword not found")
+
+    if "target_url" in data:
+        tk.target_url = data["target_url"]
+    if "target_position" in data:
+        tk.target_position = data["target_position"]
+    if "status" in data:
+        tk.status = data["status"]
+
+    tk.updated_at = datetime.utcnow()
+    db.commit()
+    return {"updated": True}
 
 
 @router.post("/{website_id}/track")
@@ -160,6 +185,7 @@ async def track_keyword(website_id: int, request: Request, db: Session = Depends
         current_impressions=data.get("impressions", 0),
         current_ctr=data.get("ctr", 0),
         ranking_url=data.get("page", ""),
+        target_url=data.get("target_url", ""),
         target_position=data.get("target_position", 1),
     )
     db.add(tk)
