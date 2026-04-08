@@ -365,6 +365,9 @@ app.include_router(keyword_router)
 from geo_routes import router as geo_router
 app.include_router(geo_router)
 
+from strategist_routes import router as strategist_router
+app.include_router(strategist_router)
+
 # --- Startup ---
 
 @app.on_event("startup")
@@ -377,7 +380,8 @@ async def startup_event():
                 "ALTER TABLE websites ADD COLUMN IF NOT EXISTS site_type VARCHAR DEFAULT 'custom'",
                 "ALTER TABLE websites ADD COLUMN IF NOT EXISTS shopify_store_url VARCHAR",
                 "ALTER TABLE websites ADD COLUMN IF NOT EXISTS shopify_access_token VARCHAR",
-                "ALTER TABLE websites ADD COLUMN IF NOT EXISTS monthly_traffic INTEGER"
+                "ALTER TABLE websites ADD COLUMN IF NOT EXISTS monthly_traffic INTEGER",
+                "ALTER TABLE tracked_keywords ADD COLUMN IF NOT EXISTS target_url VARCHAR",
             ]
             for migration in migrations:
                 try:
