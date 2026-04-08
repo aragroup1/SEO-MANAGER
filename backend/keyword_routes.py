@@ -357,6 +357,8 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
     DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN", "")
     DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD", "")
 
+    print(f"[DataForSEO] Login configured: {'yes' if DATAFORSEO_LOGIN else 'NO'}, Password configured: {'yes' if DATAFORSEO_PASSWORD else 'NO'}")
+
     if not DATAFORSEO_LOGIN or not DATAFORSEO_PASSWORD:
         return {"volumes": {}, "source": "not_configured", "message": "DataForSEO credentials not set. Add DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD env vars."}
 
