@@ -177,11 +177,23 @@ export default function GEODashboard({ websiteId }: { websiteId: number }) {
             GEO readiness for {audit.domain} · {audit.pages_analyzed} pages analyzed
           </p>
         </div>
-        <button onClick={runAudit} disabled={loading}
-          className="bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          Re-run Audit
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={async () => {
+            try {
+              await fetch(`${API_URL}/api/geo/${websiteId}/scan-fixes`, { method: 'POST' });
+              alert('GEO fix scan started. Check Issues & Fixes for proposals.');
+            } catch {}
+          }}
+            className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 text-yellow-400 px-4 py-2 rounded-lg font-medium hover:from-yellow-500/30 hover:to-orange-500/30 transition-all flex items-center gap-2 border border-yellow-500/30">
+            <Sparkles className="w-4 h-4" />
+            Generate GEO Fixes
+          </button>
+          <button onClick={runAudit} disabled={loading}
+            className="bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Re-run Audit
+          </button>
+        </div>
       </div>
 
       {/* Overall Score */}
