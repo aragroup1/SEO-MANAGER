@@ -28,7 +28,7 @@ INTEGRATION_DEFINITIONS = {
         "required": True,
         "relevantFor": ["custom", "shopify", "wordpress"],
         "dataProvided": "Traffic sources, user engagement, conversion tracking",
-        "scopes": ["https://www.googleapis.com/auth/analytics.readonly"]
+        "scopes": ["https://www.googleapis.com/auth/analytics.readonly", "https://www.googleapis.com/auth/analytics.edit"]
     },
     "shopify": {
         "name": "Shopify",
@@ -280,6 +280,31 @@ async def set_gsc_property(website_id: int, request: Request, db: Session = Depe
     return {"saved": True, "property": property_url}
 
 
+@router.post("/{website_id}/set-ga4-property")
+async def set_ga4_property(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Save the user's selected GA4 property for this website."""
+    data = await request.json()
+    property_id = data.get("property_id", "")
+    property_name = data.get("property_name", "")
+
+    integration = db.query(Integration).filter(
+        Integration.website_id == website_id,
+        Integration.integration_type == "google_analytics"
+    ).first()
+
+    if not integration:
+        raise HTTPException(status_code=404, detail="GA4 integration not found")
+
+    config = integration.config or {}
+    config["ga4_property_id"] = property_id
+    config["ga4_property_name"] = property_name
+    integration.config = config
+    integration.account_name = (integration.account_name or "Google") + " — " + property_name
+    db.commit()
+
+    return {"saved": True, "property_id": property_id, "property_name": property_name}
+
+
 @router.post("/{website_id}/disconnect")
 async def disconnect_integration(website_id: int, request: Request, db: Session = Depends(get_db)):
     data = await request.json()
@@ -466,7 +491,86 @@ async def google_oauth_callback(code: str, state: str, db: Session = Depends(get
         </html>
         """)
 
-    # For GA4 and others: just close
+    # For GA4: fetch properties and show picker
+    if integration_type == "google_analytics":
+        ga4_html = ""
+        try:
+            async with httpx.AsyncClient() as client:
+                # GA4 uses Admin API to list accounts and properties
+                accounts_resp = await client.get(
+                    "https://analyticsadmin.googleapis.com/v1beta/accounts",
+                    headers={"Authorization": f"Bearer {access_token}"}
+                )
+                if accounts_resp.status_code == 200:
+                    accounts_data = accounts_resp.json()
+                    for account in accounts_data.get("accounts", []):
+                        account_name = account.get("displayName", "Unknown")
+                        account_id = account.get("name", "")  # e.g. "accounts/12345"
+
+                        # List properties under each account
+                        props_resp = await client.get(
+                            f"https://analyticsadmin.googleapis.com/v1beta/properties",
+                            params={"filter": f"parent:{account_id}"},
+                            headers={"Authorization": f"Bearer {access_token}"}
+                        )
+                        if props_resp.status_code == 200:
+                            props_data = props_resp.json()
+                            for prop in props_data.get("properties", []):
+                                prop_name = prop.get("displayName", "")
+                                prop_id = prop.get("name", "")  # e.g. "properties/123456"
+                                prop_num = prop_id.split("/")[-1] if "/" in prop_id else prop_id
+                                ga4_html += f'<button class="prop-btn" onclick="selectGA4(\'{prop_num}\', \'{prop_name}\')">{prop_name}<span class="perm">{account_name} · {prop_id}</span></button>'
+                else:
+                    print(f"[GA4] Accounts API error: {accounts_resp.status_code} {accounts_resp.text[:200]}")
+        except Exception as e:
+            print(f"[GA4] Error listing properties: {e}")
+
+        if not ga4_html:
+            ga4_html = '<p style="color:#aaa;text-align:center;padding:20px;">No GA4 properties found. Make sure you have access to a GA4 property.</p>'
+
+        return HTMLResponse(content=f"""
+        <html>
+        <head><style>
+            * {{ margin:0; padding:0; box-sizing:border-box; }}
+            body {{ font-family:system-ui; background:#1a1a2e; color:white; display:flex; align-items:center; justify-content:center; height:100vh; }}
+            .container {{ max-width:420px; width:100%; padding:32px; }}
+            h2 {{ margin-bottom:8px; font-size:20px; }}
+            p.sub {{ color:#a0a0c0; font-size:13px; margin-bottom:20px; }}
+            .prop-btn {{ display:block; width:100%; text-align:left; padding:12px 16px; margin-bottom:8px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:10px; color:white; font-size:14px; cursor:pointer; transition:all 0.2s; }}
+            .prop-btn:hover {{ background:rgba(168,85,247,0.2); border-color:rgba(168,85,247,0.4); }}
+            .perm {{ display:block; color:#888; font-size:11px; margin-top:2px; }}
+            .skip {{ display:block; text-align:center; color:#888; font-size:12px; margin-top:16px; cursor:pointer; text-decoration:underline; }}
+        </style></head>
+        <body>
+            <div class="container">
+                <div style="text-align:center;font-size:32px;margin-bottom:12px;">&#9989;</div>
+                <h2>Google Analytics Connected</h2>
+                <p class="sub">Select the GA4 property for this website:</p>
+                <div id="props">{ga4_html}</div>
+                <a class="skip" onclick="selectGA4('', '')">Skip</a>
+            </div>
+            <script>
+                function selectGA4(propId, propName) {{
+                    if (propId) {{
+                        fetch('/api/integrations/{website_id}/set-ga4-property', {{
+                            method: 'POST',
+                            headers: {{'Content-Type': 'application/json'}},
+                            body: JSON.stringify({{property_id: propId, property_name: propName}})
+                        }}).then(() => {{
+                            window.opener && window.opener.postMessage('integration_connected', '*');
+                            window.close();
+                        }});
+                    }} else {{
+                        window.opener && window.opener.postMessage('integration_connected', '*');
+                        window.close();
+                    }}
+                }}
+            </script>
+        </body>
+        </html>
+        """)
+
+    # For other integrations: just close
     return HTMLResponse(content="""
     <html>
     <body>
