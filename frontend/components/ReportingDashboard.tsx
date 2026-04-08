@@ -25,8 +25,22 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
   const [report, setReport] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState('');
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
+  // Generate month options (last 12 months)
+  const monthOptions = (() => {
+    const opts = [{ value: '', label: 'Current (Latest Data)' }];
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+      opts.push({ value: val, label });
+    }
+    return opts;
+  })();
 
   useEffect(() => {
     setLoading(true);
@@ -41,13 +55,14 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
   const downloadPdf = async () => {
     setDownloading(true);
     try {
-      const r = await fetch(`${API_URL}/api/reports/${websiteId}/pdf`);
+      const monthParam = selectedMonth ? `?month=${selectedMonth}` : '';
+      const r = await fetch(`${API_URL}/api/reports/${websiteId}/pdf${monthParam}`);
       if (r.ok) {
         const blob = await r.blob();
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `seo-report-${report?.domain || 'site'}.pdf`;
+        a.download = `seo-report-${report?.domain || 'site'}-${selectedMonth || 'latest'}.pdf`;
         a.click();
         window.URL.revokeObjectURL(url);
       }
@@ -85,11 +100,19 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
           </h2>
           <p className="text-purple-300 mt-1 text-sm">{report.domain} · {report.generated_at.slice(0, 10)}</p>
         </div>
-        <button onClick={downloadPdf} disabled={downloading}
-          className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-5 py-2.5 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
-          {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-          {downloading ? 'Generating PDF...' : 'Download PDF'}
-        </button>
+        <div className="flex items-center gap-2">
+          <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+            className="bg-white/10 text-white border border-white/20 rounded-lg px-3 py-2.5 text-sm">
+            {monthOptions.map(m => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+          <button onClick={downloadPdf} disabled={downloading}
+            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-5 py-2.5 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
+            {downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {downloading ? 'Generating...' : 'Download PDF'}
+          </button>
+        </div>
       </div>
 
       {/* Health Score Hero */}
