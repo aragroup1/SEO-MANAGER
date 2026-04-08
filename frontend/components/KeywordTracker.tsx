@@ -86,6 +86,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [showTracked, setShowTracked] = useState(true);
   const [trackingInProgress, setTrackingInProgress] = useState<string | null>(null);
   const [subTab, setSubTab] = useState<'rankings' | 'research'>('rankings');
+  const [dateRange, setDateRange] = useState(3); // 3=latest, 7=week, 28=month, 90=quarter
 
   // Detail panel
   const [selectedKeyword, setSelectedKeyword] = useState<Keyword | null>(null);
@@ -172,12 +173,13 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [syncing, websiteId, API_URL]);
 
-  const syncKeywords = async () => {
+  const syncKeywords = async (days?: number) => {
+    const syncDays = days ?? dateRange;
     snapshotIdAtSync.current = snapshot?.id ?? null;
     setSyncing(true);
     setError('');
     try {
-      const r = await fetch(`${API_URL}/api/keywords/${websiteId}/sync`, { method: 'POST' });
+      const r = await fetch(`${API_URL}/api/keywords/${websiteId}/sync?days=${syncDays}`, { method: 'POST' });
       if (!r.ok) { const d = await r.json(); setError(d.detail || 'Sync failed'); setSyncing(false); }
     } catch { setError('Connection error'); setSyncing(false); }
   };
@@ -254,6 +256,37 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
       console.error('Research error:', err);
     } finally {
       setResearching(false);
+    }
+  };
+
+  // Road to #1 strategy
+  const [generatingStrategy, setGeneratingStrategy] = useState<number | null>(null);
+  const [strategyData, setStrategyData] = useState<any>(null);
+  const [showStrategyPanel, setShowStrategyPanel] = useState(false);
+
+  const generateStrategy = async (keywordId: number) => {
+    setGeneratingStrategy(keywordId);
+    try {
+      // Trigger generation
+      await fetch(`${API_URL}/api/keywords/${websiteId}/track/${keywordId}/strategy`, { method: 'POST' });
+      // Poll for result
+      const poll = setInterval(async () => {
+        const r = await fetch(`${API_URL}/api/keywords/${websiteId}/track/${keywordId}/strategy`);
+        if (r.ok) {
+          const data = await r.json();
+          if (data.strategy) {
+            clearInterval(poll);
+            setGeneratingStrategy(null);
+            setStrategyData(data);
+            setShowStrategyPanel(true);
+          }
+        }
+      }, 5000);
+      // Timeout after 90s
+      setTimeout(() => { clearInterval(poll); setGeneratingStrategy(null); }, 90000);
+    } catch (err) {
+      console.error('Strategy error:', err);
+      setGeneratingStrategy(null);
     }
   };
 
@@ -343,7 +376,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           <h2 className="text-2xl font-bold text-white mb-3">No Keyword Data Yet</h2>
           <p className="text-purple-300 mb-6">Connect Google Search Console and sync to see your rankings.</p>
           {error && <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 max-w-lg mx-auto"><p className="text-red-400 text-sm">{error}</p></div>}
-          <button onClick={syncKeywords} className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-lg font-medium hover:shadow-lg transition-all">
+          <button onClick={() => syncKeywords()} className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-lg font-medium hover:shadow-lg transition-all">
             Sync from Search Console
           </button>
         </div>
@@ -373,15 +406,22 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <select value={dateRange} onChange={e => { setDateRange(Number(e.target.value)); syncKeywords(Number(e.target.value)); }}
+            className="bg-white/10 text-white border border-white/20 rounded-lg px-3 py-2 text-sm">
+            <option value={3}>Latest (3 days)</option>
+            <option value={7}>Last 7 days</option>
+            <option value={28}>Last 28 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
           <button onClick={resetKeywordData}
             className="bg-white/10 text-gray-300 px-3 py-2 rounded-lg text-sm hover:bg-white/20 transition-all flex items-center gap-1.5"
             title="Reset GSC property and clear data">
             <Trash2 className="w-3.5 h-3.5" /> Reset
           </button>
-          <button onClick={syncKeywords} disabled={syncing}
+          <button onClick={() => syncKeywords()} disabled={syncing}
             className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">
             {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            {syncing ? 'Syncing...' : 'Refresh Data'}
+            {syncing ? 'Syncing...' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -412,8 +452,10 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
                 className="flex-1 min-w-[250px] bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500" />
               <select value={researchCountry} onChange={e => setResearchCountry(e.target.value)}
                 className="bg-white/10 text-white border border-white/20 rounded-lg px-3 py-2.5 text-sm">
+                <option value="GLOBAL">🌍 Worldwide</option>
                 <option value="GB">🇬🇧 UK</option><option value="US">🇺🇸 US</option><option value="CA">🇨🇦 CA</option>
-                <option value="AU">🇦🇺 AU</option><option value="DE">🇩🇪 DE</option><option value="IN">🇮🇳 IN</option>
+                <option value="AU">🇦🇺 AU</option><option value="DE">🇩🇪 DE</option><option value="FR">🇫🇷 FR</option>
+                <option value="IN">🇮🇳 IN</option><option value="BR">🇧🇷 BR</option><option value="JP">🇯🇵 JP</option>
               </select>
               <input type="text" placeholder="Niche (optional)" value={researchNiche} onChange={e => setResearchNiche(e.target.value)}
                 className="w-40 bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-purple-500" />
@@ -517,18 +559,24 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
               <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
                 <div className="px-4 pb-4 space-y-2">
                   {trackedKeywords.map(tk => (
-                    <div key={tk.id} className="flex items-center gap-3 bg-white/5 rounded-lg p-3 border border-white/10 cursor-pointer hover:bg-white/10 transition-all"
-                      onClick={() => { const kw = snapshot.keywords.find(k => k.query.toLowerCase() === tk.keyword); if (kw) openKeywordDetail(kw); }}>
-                      <Star className="w-4 h-4 text-yellow-400 fill-yellow-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-white text-sm font-medium">{tk.keyword}</p>
-                        {tk.ranking_url && <p className="text-gray-500 text-xs truncate">{tk.ranking_url}</p>}
-                      </div>
-                      <div className="flex items-center gap-4 shrink-0">
-                        <div className="text-center"><p className={`text-lg font-bold ${tk.current_position ? posColor(tk.current_position) : 'text-gray-500'}`}>{tk.current_position ?? '—'}</p><p className="text-[10px] text-gray-500">Pos</p></div>
-                        <div className="text-center"><p className="text-sm font-medium text-blue-400">{tk.current_clicks}</p><p className="text-[10px] text-gray-500">Clicks</p></div>
-                        <div className="text-center"><p className="text-sm font-medium text-purple-300">{tk.current_impressions}</p><p className="text-[10px] text-gray-500">Impr</p></div>
-                        <button onClick={e => { e.stopPropagation(); untrackKeyword(tk.id); }} className="text-gray-600 hover:text-red-400 transition-colors p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <div key={tk.id} className="bg-white/5 rounded-lg border border-white/10">
+                      <div className="flex items-center gap-3 p-3 cursor-pointer hover:bg-white/10 transition-all"
+                        onClick={() => { const kw = snapshot.keywords.find(k => k.query.toLowerCase() === tk.keyword); if (kw) openKeywordDetail(kw); }}>
+                        <Star className="w-4 h-4 text-yellow-400 fill-yellow-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white text-sm font-medium">{tk.keyword}</p>
+                          {tk.ranking_url && <p className="text-gray-500 text-xs truncate">{tk.ranking_url}</p>}
+                        </div>
+                        <div className="flex items-center gap-4 shrink-0">
+                          <div className="text-center"><p className={`text-lg font-bold ${tk.current_position ? posColor(tk.current_position) : 'text-gray-500'}`}>{tk.current_position ?? '—'}</p><p className="text-[10px] text-gray-500">Pos</p></div>
+                          <div className="text-center"><p className="text-sm font-medium text-blue-400">{tk.current_clicks}</p><p className="text-[10px] text-gray-500">Clicks</p></div>
+                          <div className="text-center"><p className="text-sm font-medium text-purple-300">{tk.current_impressions}</p><p className="text-[10px] text-gray-500">Impr</p></div>
+                          <button onClick={e => { e.stopPropagation(); generateStrategy(tk.id); }}
+                            className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 text-yellow-400 px-2.5 py-1 rounded-lg text-xs font-medium hover:from-yellow-500/30 hover:to-orange-500/30 transition-all flex items-center gap-1 border border-yellow-500/30">
+                            <Target className="w-3 h-3" /> Strategy
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); untrackKeyword(tk.id); }} className="text-gray-600 hover:text-red-400 transition-colors p-1"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -749,6 +797,150 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Strategy Panel */}
+      <AnimatePresence>
+        {showStrategyPanel && strategyData?.strategy && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex justify-end" onClick={() => setShowStrategyPanel(false)}>
+            <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="w-full max-w-2xl bg-gray-900 border-l border-white/10 h-full overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <div className="p-6 space-y-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                      <Trophy className="w-5 h-5 text-yellow-400" /> Road to #1
+                    </h3>
+                    <p className="text-purple-300 text-sm mt-1">Strategy for: <span className="text-white font-medium">{strategyData.keyword}</span></p>
+                    <p className="text-gray-500 text-xs mt-1">Current position: {strategyData.current_position ?? 'Not ranking'}</p>
+                  </div>
+                  <button onClick={() => setShowStrategyPanel(false)} className="text-gray-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+                </div>
+
+                {/* Summary */}
+                <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
+                  <p className="text-white text-sm">{strategyData.strategy.summary}</p>
+                  {strategyData.strategy.estimated_timeline && (
+                    <p className="text-purple-400 text-xs mt-2">Estimated timeline: {strategyData.strategy.estimated_timeline}</p>
+                  )}
+                  {strategyData.strategy.confidence_score && (
+                    <p className="text-gray-400 text-xs mt-1">Confidence: {strategyData.strategy.confidence_score}%</p>
+                  )}
+                </div>
+
+                {/* Gaps */}
+                {strategyData.strategy.current_gaps?.length > 0 && (
+                  <div>
+                    <h4 className="text-white font-medium text-sm mb-2">Current Gaps</h4>
+                    <div className="space-y-1.5">
+                      {strategyData.strategy.current_gaps.map((gap: any, i: number) => (
+                        <div key={i} className="flex items-start gap-2 bg-white/5 rounded-lg px-3 py-2">
+                          <span className={`text-xs px-1.5 py-0.5 rounded mt-0.5 ${gap.severity === 'critical' ? 'bg-red-500/20 text-red-400' : gap.severity === 'high' ? 'bg-orange-500/20 text-orange-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{gap.severity}</span>
+                          <p className="text-gray-300 text-sm">{gap.gap}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Plan */}
+                {strategyData.strategy.action_plan?.length > 0 && (
+                  <div>
+                    <h4 className="text-white font-medium text-sm mb-2">Action Plan</h4>
+                    <div className="space-y-2">
+                      {strategyData.strategy.action_plan.map((action: any, i: number) => (
+                        <div key={i} className="bg-white/5 rounded-lg p-3 border border-white/10">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded">#{action.priority}</span>
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${action.impact === 'high' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{action.impact} impact</span>
+                            <span className="text-xs text-gray-500">{action.effort}</span>
+                            {action.auto_fixable && <span className="text-xs bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">Auto-fixable</span>}
+                          </div>
+                          <p className="text-white text-sm font-medium">{action.action}</p>
+                          {action.details && <p className="text-gray-400 text-xs mt-1">{action.details}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Content Recommendations */}
+                {strategyData.strategy.content_recommendations && (
+                  <div>
+                    <h4 className="text-white font-medium text-sm mb-2">Content Recommendations</h4>
+                    <div className="bg-white/5 rounded-lg p-4 space-y-3">
+                      {strategyData.strategy.content_recommendations.suggested_title && (
+                        <div><p className="text-gray-500 text-xs">Suggested Title</p><p className="text-green-400 text-sm">{strategyData.strategy.content_recommendations.suggested_title}</p></div>
+                      )}
+                      {strategyData.strategy.content_recommendations.suggested_meta_description && (
+                        <div><p className="text-gray-500 text-xs">Suggested Meta Description</p><p className="text-green-400 text-sm">{strategyData.strategy.content_recommendations.suggested_meta_description}</p></div>
+                      )}
+                      {strategyData.strategy.content_recommendations.suggested_h1 && (
+                        <div><p className="text-gray-500 text-xs">Suggested H1</p><p className="text-green-400 text-sm">{strategyData.strategy.content_recommendations.suggested_h1}</p></div>
+                      )}
+                      {strategyData.strategy.content_recommendations.target_word_count && (
+                        <div><p className="text-gray-500 text-xs">Target Word Count</p><p className="text-white text-sm">{strategyData.strategy.content_recommendations.target_word_count} words</p></div>
+                      )}
+                      {strategyData.strategy.content_recommendations.content_outline?.length > 0 && (
+                        <div>
+                          <p className="text-gray-500 text-xs mb-1">Content Outline</p>
+                          {strategyData.strategy.content_recommendations.content_outline.map((section: string, i: number) => (
+                            <p key={i} className="text-gray-300 text-xs ml-2">• {section}</p>
+                          ))}
+                        </div>
+                      )}
+                      {strategyData.strategy.content_recommendations.missing_topics?.length > 0 && (
+                        <div>
+                          <p className="text-gray-500 text-xs mb-1">Missing Topics (competitors cover these)</p>
+                          {strategyData.strategy.content_recommendations.missing_topics.map((topic: string, i: number) => (
+                            <p key={i} className="text-orange-400 text-xs ml-2">• {topic}</p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Competitors */}
+                {strategyData.competitors?.length > 0 && (
+                  <div>
+                    <h4 className="text-white font-medium text-sm mb-2">Competitor Analysis</h4>
+                    <div className="space-y-2">
+                      {strategyData.competitors.map((comp: any, i: number) => (
+                        <div key={i} className="bg-white/5 rounded-lg p-3 flex items-center justify-between">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-white text-sm font-medium truncate">{comp.title || comp.url}</p>
+                            <p className="text-gray-500 text-xs truncate">{comp.url}</p>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0 ml-3">
+                            <span className="text-xs text-gray-400">{comp.word_count} words</span>
+                            <span className="text-xs text-purple-400">Pos ~{comp.position}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {strategyData.generated_at && (
+                  <p className="text-gray-600 text-xs text-center">Generated: {new Date(strategyData.generated_at).toLocaleString()}</p>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Generating Strategy Overlay */}
+      {generatingStrategy && (
+        <div className="fixed bottom-6 right-6 z-40 bg-gray-900 border border-yellow-500/30 rounded-xl p-4 shadow-2xl flex items-center gap-3">
+          <Loader2 className="w-5 h-5 text-yellow-400 animate-spin" />
+          <div>
+            <p className="text-white text-sm font-medium">Generating Strategy...</p>
+            <p className="text-gray-400 text-xs">Analyzing competitors (30-60 seconds)</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
