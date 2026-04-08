@@ -8,7 +8,7 @@ import {
   CheckCircle, XCircle, AlertCircle, Settings, Link2,
   BarChart3, Calendar, Users, FileSearch, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity,
-  ChevronDown, Menu, X
+  ChevronDown, Menu, X, MessageSquare
 } from 'lucide-react';
 import ApprovalQueue from '@/components/ApprovalQueue';
 import ErrorMonitor from '@/components/ErrorMonitor';
@@ -18,6 +18,7 @@ import AuditDashboard from '@/components/AuditDashboard';
 import WebsiteManager from '@/components/WebsiteManager';
 import KeywordTracker from '@/components/KeywordTracker';
 import GEODashboard from '@/components/GEODashboard';
+import AIStrategist from '@/components/AIStrategist';
 import SettingsPanel from '@/components/SettingsPanel';
 
 interface Website {
@@ -77,7 +78,7 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'ai-search', 'settings'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'settings'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
@@ -88,9 +89,10 @@ export default function Dashboard() {
     { id: 'keywords', label: 'Keywords', icon: Search },
     { id: 'issues', label: 'Issues & Fixes', icon: Sparkles },
     { id: 'divider2', label: '', icon: null },
+    { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
+    { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
     { id: 'content', label: 'Content', icon: Calendar },
     { id: 'competitors', label: 'Competitors', icon: Users },
-    { id: 'ai-search', label: 'AI Search', icon: Brain },
   ];
 
   return (
@@ -348,6 +350,12 @@ export default function Dashboard() {
               {activeTab === 'ai-search' && selectedWebsite && (
                 <motion.div key={`geo-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
                   <GEODashboard websiteId={selectedWebsite} />
+                </motion.div>
+              )}
+
+              {activeTab === 'strategist' && selectedWebsite && (
+                <motion.div key={`strategist-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                  <AIStrategist websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
