@@ -276,6 +276,33 @@ export default function Dashboard() {
             <AnimatePresence mode="wait">
               {activeTab === 'overview' && (
                 <motion.div key="overview" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6">
+                  {/* AI Overseer */}
+                  {websites.length > 0 && selectedWebsite && (
+                    <div className="bg-gradient-to-r from-cyan-500/10 to-purple-500/10 backdrop-blur-md rounded-2xl p-5 border border-cyan-500/20">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-purple-500 rounded-xl flex items-center justify-center">
+                            <Bot className="w-6 h-6 text-white" />
+                          </div>
+                          <div>
+                            <h3 className="text-white font-semibold">AI Overseer</h3>
+                            <p className="text-gray-400 text-xs">Runs: audit → keywords → GEO scan → fixes → strategy refresh</p>
+                          </div>
+                        </div>
+                        <button onClick={async () => {
+                          try {
+                            await fetch(`${API_URL}/api/overseer/${selectedWebsite}/run`, { method: 'POST' });
+                            alert('AI Overseer started. This will take 2-5 minutes. Check Issues & Fixes for results.');
+                          } catch { alert('Failed to start overseer'); }
+                        }}
+                          className="bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-5 py-2.5 rounded-lg font-medium hover:shadow-lg hover:shadow-cyan-500/25 transition-all flex items-center gap-2">
+                          <Zap className="w-4 h-4" />
+                          Run Full Cycle
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {websites.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {websites.map(site => (
