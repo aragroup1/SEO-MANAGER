@@ -368,6 +368,9 @@ app.include_router(geo_router)
 from strategist_routes import router as strategist_router
 app.include_router(strategist_router)
 
+from report_routes import router as report_router
+app.include_router(report_router)
+
 # --- Startup ---
 
 @app.on_event("startup")
