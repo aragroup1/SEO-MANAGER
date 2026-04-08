@@ -286,6 +286,10 @@ class SEOAuditEngine:
                         self._check_ssl(),
                     )
 
+                    # Phase 1.5: Core Web Vitals (PageSpeed Insights API)
+                    print("[Audit] Phase 1.5: Core Web Vitals...")
+                    await self._check_core_web_vitals()
+
                     # Phase 2: Crawl pages
                     print("[Audit] Phase 2: Crawling pages (max " + str(self.MAX_PAGES) + ")...")
                     self.urls_to_crawl = [self.base_url]
@@ -579,6 +583,75 @@ class SEOAuditEngine:
         except (socket.timeout, socket.gaierror, ConnectionRefusedError, OSError):
             self.ssl_valid = False
             self.ssl_days_remaining = 0
+
+    async def _check_core_web_vitals(self):
+        """Check Core Web Vitals using Google PageSpeed Insights API (free, no key needed)."""
+        import httpx
+        self.cwv_data = {}
+        try:
+            url = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+            params = {"url": self.base_url, "strategy": "mobile", "category": ["performance", "seo", "accessibility"]}
+            
+            api_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "")
+            if api_key:
+                params["key"] = api_key
+
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.get(url, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    lhr = data.get("lighthouseResult", {})
+                    audits = lhr.get("audits", {})
+                    categories = lhr.get("categories", {})
+
+                    lcp = round(float(audits.get("largest-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
+                    cls_val = round(float(audits.get("cumulative-layout-shift", {}).get("numericValue", 0)), 3)
+                    tbt = round(float(audits.get("total-blocking-time", {}).get("numericValue", 0)))
+                    fcp = round(float(audits.get("first-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
+                    si = round(float(audits.get("speed-index", {}).get("numericValue", 0)) / 1000, 2)
+                    perf_score = round((categories.get("performance", {}).get("score", 0) or 0) * 100)
+                    seo_score = round((categories.get("seo", {}).get("score", 0) or 0) * 100)
+                    a11y_score = round((categories.get("accessibility", {}).get("score", 0) or 0) * 100)
+
+                    self.cwv_data = {
+                        "lcp": lcp, "cls": cls_val, "tbt": tbt, "fcp": fcp,
+                        "speed_index": si, "performance_score": perf_score,
+                        "seo_score": seo_score, "accessibility_score": a11y_score,
+                    }
+
+                    # Generate issues from CWV
+                    if lcp > 4.0:
+                        self._add_issue("Poor LCP (Largest Contentful Paint)", IssueSeverity.ERROR, "Performance",
+                                      "LCP is " + str(lcp) + "s (should be under 2.5s). The main content takes too long to load.",
+                                      how_to_fix="Optimize largest image/text block. Use lazy loading, compress images, improve server response time.")
+                    elif lcp > 2.5:
+                        self._add_issue("Needs Improvement: LCP", IssueSeverity.WARNING, "Performance",
+                                      "LCP is " + str(lcp) + "s (good is under 2.5s).",
+                                      how_to_fix="Optimize image loading and server response time.")
+
+                    if cls_val > 0.25:
+                        self._add_issue("Poor CLS (Cumulative Layout Shift)", IssueSeverity.ERROR, "Performance",
+                                      "CLS is " + str(cls_val) + " (should be under 0.1). Page elements shift during loading.",
+                                      how_to_fix="Set explicit width/height on images and embeds. Avoid inserting content above existing content.")
+                    elif cls_val > 0.1:
+                        self._add_issue("Needs Improvement: CLS", IssueSeverity.WARNING, "Performance",
+                                      "CLS is " + str(cls_val) + " (good is under 0.1).",
+                                      how_to_fix="Add dimensions to images and avoid dynamic content injection.")
+
+                    if tbt > 600:
+                        self._add_issue("Poor TBT (Total Blocking Time)", IssueSeverity.ERROR, "Performance",
+                                      "TBT is " + str(tbt) + "ms (should be under 200ms). JavaScript is blocking the main thread.",
+                                      how_to_fix="Reduce JavaScript execution time. Code-split, defer non-critical scripts, remove unused JS.")
+                    elif tbt > 200:
+                        self._add_issue("Needs Improvement: TBT", IssueSeverity.WARNING, "Performance",
+                                      "TBT is " + str(tbt) + "ms (good is under 200ms).",
+                                      how_to_fix="Defer non-critical JavaScript and reduce third-party scripts.")
+
+                    print("[Audit] CWV: LCP=" + str(lcp) + "s, CLS=" + str(cls_val) + ", TBT=" + str(tbt) + "ms, Perf=" + str(perf_score))
+                else:
+                    print("[Audit] PageSpeed API error: " + str(resp.status_code))
+        except Exception as e:
+            print("[Audit] CWV check error: " + str(e))
 
     # ─────────────────────────────────────────────
     #  Aggregate issues from all crawled pages
@@ -972,6 +1045,7 @@ class SEOAuditEngine:
                     "ssl_days_remaining": self.ssl_days_remaining,
                     "pages_crawled": len(self.crawled_urls),
                     "broken_links_count": len(self.broken_links),
+                    "core_web_vitals": getattr(self, 'cwv_data', {}),
                 }
             }
         )
