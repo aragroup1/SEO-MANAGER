@@ -700,10 +700,10 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           </div>
         )}
 
-        <div className="grid grid-cols-14 gap-1 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400" style={{ gridTemplateColumns: '2.5rem 1fr 3rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}>
+        <div className="grid grid-cols-14 gap-1 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400" style={{ gridTemplateColumns: '2.5rem 1fr 4.5rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}>
           <div></div>
           <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleSort('query')}>Keyword <SortIcon field="query" /></div>
-          <div className="text-center">🌍</div>
+          <div className="text-center">Country</div>
           <div className="text-right text-purple-300">Vol</div>
           <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('clicks')}>Clicks <SortIcon field="clicks" /></div>
           <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('impressions')}>Impr <SortIcon field="impressions" /></div>
@@ -717,7 +717,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
             const vol = searchVolumes[kw.query.toLowerCase()];
             return (
               <div key={kw.query + idx} className="grid gap-1 px-4 py-2.5 border-b border-white/5 hover:bg-white/5 transition-all items-center cursor-pointer"
-                style={{ gridTemplateColumns: '2.5rem 1fr 3rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}
+                style={{ gridTemplateColumns: '2.5rem 1fr 4.5rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}
                 onClick={() => openKeywordDetail(kw)}>
                 <div>
                   <button onClick={e => { e.stopPropagation(); if (!tracked) trackKeyword(kw); }}
@@ -730,8 +730,8 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
                 <div className="min-w-0"><p className="text-white text-sm truncate">{kw.query}</p></div>
                 <div className="text-center">
                   {kw.country ? (
-                    <span className="text-[10px]" title={kw.country}>{getFlag(kw.country)}</span>
-                  ) : <span className="text-gray-600 text-[10px]">—</span>}
+                    <span className="text-sm" title={kw.country}>{getFlag(kw.country)} <span className="text-gray-400 text-xs">{kw.country}</span></span>
+                  ) : <span className="text-gray-600 text-xs">—</span>}
                 </div>
                 <div className="text-right">
                   {vol ? (
