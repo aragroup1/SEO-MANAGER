@@ -352,30 +352,47 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   // ─── Simple SVG chart for keyword history ───
   const HistoryChart = ({ data, metric, invertY = false }: { data: HistoryPoint[]; metric: 'position' | 'clicks' | 'impressions'; invertY?: boolean }) => {
     if (!data.length) return null;
-    const values = data.map(d => d[metric] as number);
-    const maxVal = Math.max(...values, 1);
-    const minVal = Math.min(...values, 0);
+    const isPosition = metric === 'position';
+    const shouldInvert = isPosition || invertY;
+
+    // For position: filter out 0s (not ranking) for scale calculation, treat 0 as worst
+    let values = data.map(d => d[metric] as number);
+    const nonZeroValues = isPosition ? values.filter(v => v > 0) : values;
+
+    if (nonZeroValues.length === 0 && isPosition) {
+      // All zeros — not ranking at all
+      return (
+        <svg viewBox="0 0 600 120" className="w-full h-28" preserveAspectRatio="none">
+          <text x="300" y="60" fill="#666" fontSize="12" textAnchor="middle">Not ranking yet</text>
+        </svg>
+      );
+    }
+
+    const maxVal = Math.max(...nonZeroValues, 1);
+    const minVal = isPosition ? Math.min(...nonZeroValues, 1) : Math.min(...values, 0);
     const range = maxVal - minVal || 1;
     const w = 600, h = 120, pad = 30;
-    // For position: 1 should be at TOP, higher numbers at BOTTOM
-    // invertY=true means "up is good" — used for position where lower number = better
-    const shouldInvert = metric === 'position' || invertY;
 
     const points = data.map((d, i) => {
       const x = pad + (i / (data.length - 1 || 1)) * (w - pad * 2);
       const val = d[metric] as number;
-      // When shouldInvert: higher values go DOWN (bottom), lower values go UP (top)
-      // This means position 1 = top of chart, position 50 = bottom
-      const y = shouldInvert
-        ? pad + ((val - minVal) / range) * (h - pad * 2)
-        : pad + (1 - (val - minVal) / range) * (h - pad * 2);
+
+      let y: number;
+      if (isPosition && val === 0) {
+        // Not ranking = bottom of chart
+        y = h - pad;
+      } else if (shouldInvert) {
+        // Position: 1 at top, higher numbers toward bottom
+        y = pad + ((val - minVal) / range) * (h - pad * 2);
+      } else {
+        y = pad + (1 - (val - minVal) / range) * (h - pad * 2);
+      }
       return `${x},${y}`;
     }).join(' ');
 
     const color = metric === 'position' ? '#a855f7' : metric === 'clicks' ? '#3b82f6' : '#8b5cf6';
-    // Labels: for position chart, top label = best (min), bottom = worst (max)
-    const topLabel = shouldInvert ? minVal : maxVal;
-    const bottomLabel = shouldInvert ? maxVal : minVal;
+    const topLabel = shouldInvert ? (isPosition ? '#' + minVal : minVal) : maxVal;
+    const bottomLabel = shouldInvert ? (isPosition ? maxVal > 0 ? '#' + maxVal : 'N/R' : maxVal) : minVal;
 
     return (
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-28" preserveAspectRatio="none">
@@ -384,7 +401,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
         <text x={w - pad} y={h - 5} fill="#666" fontSize="10" textAnchor="end">{data[data.length - 1].date.slice(5)}</text>
         <text x={pad - 5} y={pad + 4} fill="#888" fontSize="10" textAnchor="end">{topLabel}</text>
         <text x={pad - 5} y={h - pad + 4} fill="#888" fontSize="10" textAnchor="end">{bottomLabel}</text>
-        {shouldInvert && <text x={w - 5} y={pad + 4} fill="#4ade80" fontSize="9" textAnchor="end">better ↑</text>}
+        {shouldInvert && <text x={w - 5} y={pad + 4} fill="#4ade80" fontSize="9" textAnchor="end">#1 ↑</text>}
       </svg>
     );
   };
