@@ -235,6 +235,46 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
         </div>
       )}
 
+      {/* Ranking Changes */}
+      {kw?.ranking_changes && (kw.ranking_changes.improved?.length > 0 || kw.ranking_changes.declined?.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {kw.ranking_changes.improved?.length > 0 && (
+            <div className="bg-green-500/5 backdrop-blur-md rounded-xl p-5 border border-green-500/20">
+              <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-green-400" /> Rankings Improved ({kw.ranking_changes.total_improved})</h3>
+              <div className="space-y-2">
+                {kw.ranking_changes.improved.map((c: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2">
+                    <span className="text-white text-sm truncate flex-1">{c.query}</span>
+                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                      <span className="text-gray-500 text-xs line-through">#{c.previous}</span>
+                      <span className="text-green-400 text-sm font-bold">#{c.current}</span>
+                      <span className="text-green-400 text-xs bg-green-500/20 px-1.5 py-0.5 rounded">+{c.change}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {kw.ranking_changes.declined?.length > 0 && (
+            <div className="bg-red-500/5 backdrop-blur-md rounded-xl p-5 border border-red-500/20">
+              <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><TrendingDown className="w-5 h-5 text-red-400" /> Rankings Declined ({kw.ranking_changes.total_declined})</h3>
+              <div className="space-y-2">
+                {kw.ranking_changes.declined.map((c: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-2">
+                    <span className="text-white text-sm truncate flex-1">{c.query}</span>
+                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                      <span className="text-gray-500 text-xs line-through">#{c.previous}</span>
+                      <span className="text-red-400 text-sm font-bold">#{c.current}</span>
+                      <span className="text-red-400 text-xs bg-red-500/20 px-1.5 py-0.5 rounded">{c.change}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Tracked Keywords */}
       {report.tracked_keywords?.length > 0 && (
         <div className="bg-white/10 backdrop-blur-md rounded-xl p-5 border border-white/20">
@@ -262,7 +302,10 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
       {/* Fix Status */}
       {fixes && (
         <div className="bg-white/10 backdrop-blur-md rounded-xl p-5 border border-white/20">
-          <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><Sparkles className="w-5 h-5 text-purple-400" /> Auto-Fix Status</h3>
+          <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><Sparkles className="w-5 h-5 text-purple-400" /> Work Done</h3>
+          {(fixes as any).applied_this_month > 0 && (
+            <p className="text-green-400 text-sm mb-3">{(fixes as any).applied_this_month} fixes applied this period</p>
+          )}
           <div className="grid grid-cols-5 gap-3">
             {[
               { label: 'Applied', count: fixes.applied || 0, color: 'text-green-400', icon: CheckCircle },
@@ -278,6 +321,22 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
               </div>
             ))}
           </div>
+          {(fixes as any).by_type && Object.keys((fixes as any).by_type).length > 0 && (
+            <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-3 flex-wrap">
+              <span className="text-gray-500 text-xs">Applied by type:</span>
+              {Object.entries((fixes as any).by_type).map(([type, count]: [string, any]) => (
+                <span key={type} className="text-xs bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full">{type}: {count}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* AI Summary */}
+      {(report as any).ai_summary && (
+        <div className="bg-gradient-to-r from-purple-500/10 to-cyan-500/10 backdrop-blur-md rounded-xl p-5 border border-purple-500/20">
+          <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><Activity className="w-5 h-5 text-cyan-400" /> SEO Analysis & Trajectory</h3>
+          <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-line">{(report as any).ai_summary}</div>
         </div>
       )}
 
@@ -286,7 +345,7 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
         <div className="bg-white/10 backdrop-blur-md rounded-xl p-5 border border-white/20">
           <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><BarChart3 className="w-5 h-5 text-purple-400" /> Score History</h3>
           <div className="flex items-end gap-2 h-24">
-            {report.audit_history.reverse().map((h: any, i: number) => {
+            {[...report.audit_history].map((h: any, i: number) => {
               const height = `${Math.max(h.score, 5)}%`;
               return (
                 <div key={i} className="flex-1 flex flex-col items-center gap-1">
