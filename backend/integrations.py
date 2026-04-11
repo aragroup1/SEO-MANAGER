@@ -223,9 +223,34 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
 
     # ─── WordPress (app password based) ───
     elif integration_id == "wordpress":
-        wp_url = data.get("wordpress_url")
-        wp_username = data.get("username", "")
-        wp_app_password = data.get("app_password", "")
+        wp_url = data.get("wordpress_url", "").strip()
+        wp_username = data.get("username", "").strip()
+        wp_app_password = data.get("app_password", "").strip()
+
+        if not wp_url or not wp_username or not wp_app_password:
+            return {"connected": False, "message": "WordPress URL, username, and application password are all required."}
+
+        # Normalize URL
+        if not wp_url.startswith("http"):
+            wp_url = "https://" + wp_url
+        wp_url = wp_url.rstrip("/")
+
+        # Test the connection before saving
+        try:
+            import httpx as httpx_lib
+            async with httpx_lib.AsyncClient(timeout=10) as test_client:
+                test_resp = await test_client.get(
+                    f"{wp_url}/wp-json/wp/v2/posts?per_page=1",
+                    auth=(wp_username, wp_app_password)
+                )
+                if test_resp.status_code == 401:
+                    return {"connected": False, "message": "Authentication failed. Check your username and application password."}
+                elif test_resp.status_code == 404:
+                    return {"connected": False, "message": "WordPress REST API not found. Is this a WordPress site?"}
+                elif test_resp.status_code != 200:
+                    return {"connected": False, "message": f"WordPress returned status {test_resp.status_code}. Check the URL."}
+        except Exception as e:
+            return {"connected": False, "message": f"Could not reach WordPress at {wp_url}: {str(e)[:100]}"}
 
         existing = db.query(Integration).filter(
             Integration.website_id == website_id,
@@ -252,7 +277,7 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
             db.add(new_integration)
 
         db.commit()
-        return {"connected": True, "message": "WordPress connected"}
+        return {"connected": True, "message": f"WordPress connected: {wp_url}"}
 
     return {"connected": False, "message": "Integration type not handled"}
 
