@@ -339,13 +339,14 @@ async def get_strategy(website_id: int, keyword_id: int, db: Session = Depends(g
         return {"strategy": None, "notes": tk.notes}
 
 
-# ─── Search Volume Lookup (DataForSEO) ───
+# ─── Search Volume Lookup (DataForSEO) with Daily Cache ───
 
 @router.post("/{website_id}/search-volumes")
 async def get_search_volumes(website_id: int, request: Request, db: Session = Depends(get_db)):
-    """Fetch search volumes for a list of keywords using DataForSEO.
-    If DataForSEO is not configured, returns empty volumes."""
+    """Fetch search volumes with daily caching to control DataForSEO costs.
+    Only calls DataForSEO API once per day per website. Cached in database."""
     import base64
+    from datetime import date
 
     data = await request.json()
     keywords = data.get("keywords", [])
@@ -354,13 +355,37 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
     if not keywords:
         return {"volumes": {}, "source": "none"}
 
+    # ─── Check cache first ───
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if website:
+        from database import KeywordSnapshot
+        latest = db.query(KeywordSnapshot).filter(
+            KeywordSnapshot.website_id == website_id
+        ).order_by(KeywordSnapshot.snapshot_date.desc()).first()
+
+        if latest:
+            cached = latest.keyword_data
+            if isinstance(cached, list) and cached and cached[0].get("_volume_cache_date"):
+                cache_date = cached[0].get("_volume_cache_date", "")
+                if cache_date == str(date.today()):
+                    # Return cached volumes
+                    volumes = {}
+                    for kw in cached:
+                        if kw.get("_sv") is not None:
+                            volumes[kw["query"].lower()] = {
+                                "search_volume": kw.get("_sv", 0),
+                                "competition": kw.get("_comp", 0),
+                                "cpc": kw.get("_cpc", 0),
+                            }
+                    if volumes:
+                        print(f"[DataForSEO] Returning cached volumes ({len(volumes)} keywords, cached {cache_date})")
+                        return {"volumes": volumes, "source": "dataforseo_cached", "total": len(volumes)}
+
     DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN", "")
     DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD", "")
 
-    print(f"[DataForSEO] Login configured: {'yes' if DATAFORSEO_LOGIN else 'NO'}, Password configured: {'yes' if DATAFORSEO_PASSWORD else 'NO'}")
-
     if not DATAFORSEO_LOGIN or not DATAFORSEO_PASSWORD:
-        return {"volumes": {}, "source": "not_configured", "message": "DataForSEO credentials not set. Add DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD env vars."}
+        return {"volumes": {}, "source": "not_configured", "message": "DataForSEO credentials not set."}
 
     location_map = {
         "GB": 2826, "US": 2840, "CA": 2124, "AU": 2036,
@@ -415,6 +440,32 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
                         }
 
                 print(f"[DataForSEO] Got volumes for {len(volumes)}/{len(kw_batch)} keywords")
+
+                # ─── Save to daily cache ───
+                try:
+                    from database import KeywordSnapshot
+                    latest = db.query(KeywordSnapshot).filter(
+                        KeywordSnapshot.website_id == website_id
+                    ).order_by(KeywordSnapshot.snapshot_date.desc()).first()
+                    if latest and latest.keyword_data:
+                        from datetime import date
+                        updated_kw = []
+                        for kw in latest.keyword_data:
+                            q = kw.get("query", "").lower()
+                            if q in volumes:
+                                kw["_sv"] = volumes[q]["search_volume"]
+                                kw["_comp"] = volumes[q]["competition"]
+                                kw["_cpc"] = volumes[q]["cpc"]
+                            kw["_volume_cache_date"] = str(date.today())
+                            updated_kw.append(kw)
+                        latest.keyword_data = updated_kw
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(latest, "keyword_data")
+                        db.commit()
+                        print(f"[DataForSEO] Cached volumes for next 24h")
+                except Exception as cache_err:
+                    print(f"[DataForSEO] Cache save error (non-fatal): {cache_err}")
+
                 return {"volumes": volumes, "source": "dataforseo", "total": len(volumes)}
             elif resp.status_code == 401:
                 print(f"[DataForSEO] Auth failed (401). Check login email and API password (not account password).")
