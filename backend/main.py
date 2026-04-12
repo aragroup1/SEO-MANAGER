@@ -408,6 +408,135 @@ async def run_overseer_all(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_overseer_background, None)
     return {"status": "running", "message": "AI Overseer started for all websites."}
 
+# --- Overview Summary ---
+
+@app.get("/api/overview")
+async def get_overview_summary(db: Session = Depends(get_db)):
+    """Get a quick summary for all websites — health, keywords, changes."""
+    websites = db.query(Website).filter(Website.is_active == True).all()
+    summaries = []
+
+    for w in websites:
+        summary = {"id": w.id, "domain": w.domain, "site_type": w.site_type}
+
+        # Latest audit
+        latest_audit = db.query(AuditReport).filter(AuditReport.website_id == w.id).order_by(AuditReport.audit_date.desc()).first()
+        prev_audit = None
+        if latest_audit:
+            prev_audit = db.query(AuditReport).filter(AuditReport.website_id == w.id, AuditReport.id != latest_audit.id).order_by(AuditReport.audit_date.desc()).first()
+
+        if latest_audit:
+            prev_score = prev_audit.health_score if prev_audit else latest_audit.health_score
+            summary["health_score"] = latest_audit.health_score
+            summary["score_change"] = round(latest_audit.health_score - prev_score, 1)
+            summary["total_issues"] = latest_audit.total_issues
+            summary["critical_issues"] = latest_audit.critical_issues
+            summary["issues_change"] = latest_audit.total_issues - (prev_audit.total_issues if prev_audit else latest_audit.total_issues)
+            summary["last_audit"] = latest_audit.audit_date.isoformat()
+        else:
+            summary["health_score"] = None
+            summary["score_change"] = 0
+            summary["total_issues"] = 0
+            summary["critical_issues"] = 0
+            summary["issues_change"] = 0
+            summary["last_audit"] = None
+
+        # Latest keywords
+        latest_snap = db.query(KeywordSnapshot).filter(KeywordSnapshot.website_id == w.id).order_by(KeywordSnapshot.snapshot_date.desc()).first()
+        prev_snap = None
+        if latest_snap:
+            prev_snap = db.query(KeywordSnapshot).filter(KeywordSnapshot.website_id == w.id, KeywordSnapshot.id != latest_snap.id).order_by(KeywordSnapshot.snapshot_date.desc()).first()
+
+        if latest_snap:
+            summary["total_keywords"] = latest_snap.total_keywords
+            summary["total_clicks"] = latest_snap.total_clicks
+            summary["total_impressions"] = latest_snap.total_impressions
+            summary["avg_position"] = latest_snap.avg_position
+            summary["keywords_change"] = latest_snap.total_keywords - (prev_snap.total_keywords if prev_snap else 0)
+            summary["clicks_change"] = latest_snap.total_clicks - (prev_snap.total_clicks if prev_snap else 0)
+        else:
+            summary["total_keywords"] = 0
+            summary["total_clicks"] = 0
+            summary["total_impressions"] = 0
+            summary["avg_position"] = 0
+            summary["keywords_change"] = 0
+            summary["clicks_change"] = 0
+
+        # Fixes
+        summary["pending_fixes"] = db.query(ProposedFix).filter(ProposedFix.website_id == w.id, ProposedFix.status == "pending").count()
+        summary["applied_fixes"] = db.query(ProposedFix).filter(ProposedFix.website_id == w.id, ProposedFix.status == "applied").count()
+
+        # Tracked keywords
+        tracked = db.query(TrackedKeyword).filter(TrackedKeyword.website_id == w.id).all()
+        summary["tracked_count"] = len(tracked)
+        summary["tracked_keywords"] = [{"keyword": tk.keyword, "position": tk.current_position, "clicks": tk.current_clicks} for tk in tracked[:5]]
+
+        summaries.append(summary)
+
+    return {"websites": summaries}
+
+# --- Daily Audit Scheduler ---
+
+_daily_audit_running = False
+
+async def _run_daily_audits():
+    """Run audits for all active websites. Called once per day."""
+    global _daily_audit_running
+    if _daily_audit_running:
+        print("[DailyAudit] Already running, skipping")
+        return
+    _daily_audit_running = True
+    try:
+        db = SessionLocal()
+        websites = db.query(Website).filter(Website.is_active == True).all()
+        db.close()
+
+        print(f"[DailyAudit] Starting daily audits for {len(websites)} websites")
+        for w in websites:
+            try:
+                from audit_engine import SEOAuditEngine
+                engine = SEOAuditEngine(w.id)
+                result = await engine.run_comprehensive_audit()
+                print(f"[DailyAudit] {w.domain}: score {result.get('health_score', 'N/A')}")
+                await asyncio.sleep(5)  # Pause between sites
+            except Exception as e:
+                print(f"[DailyAudit] {w.domain} failed: {e}")
+        print("[DailyAudit] All daily audits complete")
+    except Exception as e:
+        print(f"[DailyAudit] Error: {e}")
+    finally:
+        _daily_audit_running = False
+
+def _schedule_daily_audits():
+    """Schedule daily audits to run every 24 hours."""
+    import threading
+
+    def _daily_loop():
+        import time
+        while True:
+            # Wait until 3 AM UTC
+            from datetime import datetime, timedelta
+            now = datetime.utcnow()
+            target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            print(f"[DailyAudit] Next audit in {wait_seconds/3600:.1f} hours (3 AM UTC)")
+            time.sleep(wait_seconds)
+
+            # Run audits
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(_run_daily_audits())
+                loop.close()
+            except Exception as e:
+                print(f"[DailyAudit] Scheduler error: {e}")
+
+    thread = threading.Thread(target=_daily_loop, daemon=True)
+    thread.start()
+    print("[DailyAudit] Scheduler started (runs daily at 3 AM UTC)")
+
 # --- Startup ---
 
 @app.on_event("startup")
@@ -432,6 +561,9 @@ async def startup_event():
         print("Database schema updated")
     except Exception as e:
         print(f"Migration skipped: {e}")
+
+    # Start daily audit scheduler
+    _schedule_daily_audits()
 
 if __name__ == "__main__":
     import uvicorn
