@@ -343,8 +343,8 @@ async def get_strategy(website_id: int, keyword_id: int, db: Session = Depends(g
 
 @router.post("/{website_id}/search-volumes")
 async def get_search_volumes(website_id: int, request: Request, db: Session = Depends(get_db)):
-    """Fetch search volumes with daily caching to control DataForSEO costs.
-    Only calls DataForSEO API once per day per website. Cached in database."""
+    """Fetch search volumes with MONTHLY caching to control DataForSEO costs.
+    Only calls DataForSEO API once per month per website. Cached in database."""
     import base64
     from datetime import date
 
@@ -355,7 +355,7 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
     if not keywords:
         return {"volumes": {}, "source": "none"}
 
-    # ─── Check cache first ───
+    # ─── Check cache first (monthly) ───
     website = db.query(Website).filter(Website.id == website_id).first()
     if website:
         from database import KeywordSnapshot
@@ -367,7 +367,11 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
             cached = latest.keyword_data
             if isinstance(cached, list) and cached and cached[0].get("_volume_cache_date"):
                 cache_date = cached[0].get("_volume_cache_date", "")
-                if cache_date == str(date.today()):
+                # Monthly cache: check if same year-month
+                today = date.today()
+                cache_month = cache_date[:7] if len(cache_date) >= 7 else ""
+                current_month = str(today)[:7]
+                if cache_month == current_month:
                     # Return cached volumes
                     volumes = {}
                     for kw in cached:
@@ -378,14 +382,14 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
                                 "cpc": kw.get("_cpc", 0),
                             }
                     if volumes:
-                        print(f"[DataForSEO] Returning cached volumes ({len(volumes)} keywords, cached {cache_date})")
-                        return {"volumes": volumes, "source": "dataforseo_cached", "total": len(volumes)}
+                        print(f"[DataForSEO] Returning monthly cached volumes ({len(volumes)} keywords, cached {cache_date})")
+                        return {"volumes": volumes, "source": "dataforseo_cached", "total": len(volumes), "cached_date": cache_date}
 
     DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN", "")
     DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD", "")
 
     if not DATAFORSEO_LOGIN or not DATAFORSEO_PASSWORD:
-        return {"volumes": {}, "source": "not_configured", "message": "DataForSEO credentials not set."}
+        return {"volumes": {}, "source": "not_configured", "message": "DataForSEO credentials not set. Add DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD environment variables."}
 
     location_map = {
         "GB": 2826, "US": 2840, "CA": 2124, "AU": 2036,
@@ -415,12 +419,16 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
 
             if resp.status_code == 200:
                 api_data = resp.json()
-                # Check for task-level errors
+                # Check for task-level errors (402 = no balance, 40200 = payment required)
                 tasks = api_data.get("tasks", [])
                 if tasks and tasks[0].get("status_code") != 20000:
+                    task_code = tasks[0].get("status_code", 0)
                     error_msg = tasks[0].get("status_message", "Unknown task error")
-                    print(f"[DataForSEO] Task error: {tasks[0].get('status_code')} {error_msg}")
-                    return {"volumes": {}, "source": "error", "message": f"DataForSEO: {error_msg}"}
+                    if task_code == 40200 or task_code == 40201:
+                        print(f"[DataForSEO] No balance (status {task_code}). Add funds at dataforseo.com/account")
+                        return {"volumes": {}, "source": "error", "message": "DataForSEO account has no balance. Add funds at dataforseo.com → Dashboard → Balance."}
+                    print(f"[DataForSEO] Task error: {task_code} {error_msg}")
+                    return {"volumes": {}, "source": "error", "message": f"DataForSEO error {task_code}: {error_msg}"}
 
                 results = tasks[0].get("result", []) if tasks else []
 
@@ -441,14 +449,13 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
 
                 print(f"[DataForSEO] Got volumes for {len(volumes)}/{len(kw_batch)} keywords")
 
-                # ─── Save to daily cache ───
+                # ─── Save to monthly cache ───
                 try:
                     from database import KeywordSnapshot
                     latest = db.query(KeywordSnapshot).filter(
                         KeywordSnapshot.website_id == website_id
                     ).order_by(KeywordSnapshot.snapshot_date.desc()).first()
                     if latest and latest.keyword_data:
-                        from datetime import date
                         updated_kw = []
                         for kw in latest.keyword_data:
                             q = kw.get("query", "").lower()
@@ -462,7 +469,7 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
                         from sqlalchemy.orm.attributes import flag_modified
                         flag_modified(latest, "keyword_data")
                         db.commit()
-                        print(f"[DataForSEO] Cached volumes for next 24h")
+                        print(f"[DataForSEO] Cached volumes for this month")
                 except Exception as cache_err:
                     print(f"[DataForSEO] Cache save error (non-fatal): {cache_err}")
 
@@ -470,6 +477,9 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
             elif resp.status_code == 401:
                 print(f"[DataForSEO] Auth failed (401). Check login email and API password (not account password).")
                 return {"volumes": {}, "source": "error", "message": "DataForSEO authentication failed. Use your API password from dataforseo.com/account, not your login password."}
+            elif resp.status_code == 402:
+                print(f"[DataForSEO] Payment required (402). Add funds at dataforseo.com")
+                return {"volumes": {}, "source": "error", "message": "DataForSEO account has no balance. Add funds at dataforseo.com → Dashboard → Balance."}
             else:
                 error_text = resp.text[:300]
                 print(f"[DataForSEO] Error: {resp.status_code} {error_text}")
