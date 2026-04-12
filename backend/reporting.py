@@ -136,7 +136,7 @@ async def generate_report_data(website_id: int, month: str = None) -> Dict[str, 
         tracked = db.query(TrackedKeyword).filter(TrackedKeyword.website_id == website_id).all()
         report["tracked_keywords"] = [{"keyword": tk.keyword, "position": tk.current_position, "clicks": tk.current_clicks, "impressions": tk.current_impressions, "target_url": tk.target_url or tk.ranking_url, "has_strategy": bool(tk.notes)} for tk in tracked]
 
-        # ─── Fixes Done ───
+        # ─── Fixes Done (detailed work breakdown) ───
         fq = db.query(ProposedFix).filter(ProposedFix.website_id == website_id)
         applied_period = fq.filter(ProposedFix.status == "applied")
         generated_period = fq
@@ -148,10 +148,68 @@ async def generate_report_data(website_id: int, month: str = None) -> Dict[str, 
         for s in ["pending", "approved", "applied", "failed", "rejected"]:
             fix_counts[s] = db.query(ProposedFix).filter(ProposedFix.website_id == website_id, ProposedFix.status == s).count()
 
-        fix_types = dict(db.query(ProposedFix.fix_type, func.count(ProposedFix.id)).filter(
+        # Detailed breakdown by type (all time applied)
+        fix_types_all = dict(db.query(ProposedFix.fix_type, func.count(ProposedFix.id)).filter(
             ProposedFix.website_id == website_id, ProposedFix.status == "applied").group_by(ProposedFix.fix_type).all())
 
-        report["fixes"] = {**fix_counts, "applied_this_month": applied_period.count(), "generated_this_month": generated_period.count(), "by_type": fix_types}
+        # Detailed breakdown by type (this month applied)
+        fix_types_month = {}
+        if month_start:
+            fix_types_month = dict(db.query(ProposedFix.fix_type, func.count(ProposedFix.id)).filter(
+                ProposedFix.website_id == website_id, ProposedFix.status == "applied",
+                ProposedFix.applied_at >= month_start, ProposedFix.applied_at <= month_end
+            ).group_by(ProposedFix.fix_type).all())
+        else:
+            fix_types_month = fix_types_all
+
+        # Breakdown by resource type (products, pages, collections, etc)
+        fix_by_resource = dict(db.query(ProposedFix.resource_type, func.count(ProposedFix.id)).filter(
+            ProposedFix.website_id == website_id, ProposedFix.status == "applied").group_by(ProposedFix.resource_type).all())
+
+        # Recent applied fixes (last 20) for detail section
+        recent_fixes = db.query(ProposedFix).filter(
+            ProposedFix.website_id == website_id, ProposedFix.status == "applied"
+        ).order_by(ProposedFix.applied_at.desc()).limit(20).all()
+
+        work_details = []
+        for f in recent_fixes:
+            work_details.append({
+                "type": f.fix_type, "resource": f.resource_title or f.resource_url or "",
+                "field": f.field_name, "applied_at": f.applied_at.isoformat() if f.applied_at else "",
+                "category": f.category,
+            })
+
+        report["fixes"] = {
+            **fix_counts,
+            "applied_this_month": applied_period.count(),
+            "generated_this_month": generated_period.count(),
+            "by_type": fix_types_all,
+            "by_type_this_month": fix_types_month,
+            "by_resource": fix_by_resource,
+            "recent_work": work_details,
+        }
+
+        # ─── Since Inception (first snapshot vs latest) ───
+        first_snap = db.query(KeywordSnapshot).filter(
+            KeywordSnapshot.website_id == website_id
+        ).order_by(KeywordSnapshot.snapshot_date.asc()).first()
+
+        if first_snap and latest_snap and first_snap.id != latest_snap.id:
+            report["since_inception"] = {
+                "tracking_started": first_snap.snapshot_date.strftime("%Y-%m-%d"),
+                "initial_keywords": first_snap.total_keywords,
+                "initial_clicks": first_snap.total_clicks,
+                "initial_impressions": first_snap.total_impressions,
+                "initial_avg_position": first_snap.avg_position,
+                "keywords_growth": latest_snap.total_keywords - first_snap.total_keywords,
+                "clicks_growth": latest_snap.total_clicks - first_snap.total_clicks,
+                "impressions_growth": latest_snap.total_impressions - first_snap.total_impressions,
+                "position_change": round(first_snap.avg_position - latest_snap.avg_position, 1),
+                "total_fixes_applied": fix_counts.get("applied", 0),
+                "total_audits": db.query(AuditReport).filter(AuditReport.website_id == website_id).count(),
+            }
+        else:
+            report["since_inception"] = None
 
         # ─── History Charts ───
         report["audit_history"] = [{"date": h.audit_date.strftime("%Y-%m-%d"), "score": h.health_score, "issues": h.total_issues} for h in db.query(AuditReport).filter(AuditReport.website_id == website_id).order_by(AuditReport.audit_date.asc()).limit(20).all()]
@@ -186,10 +244,27 @@ Keywords: {kw['total'] if kw else 0} ({kw.get('keywords_change',0):+d}) | Clicks
 Top 3: {kw.get('top3',0)} | Top 10: {kw.get('top10',0)} | Top 20: {kw.get('top20',0)}
 Fixes applied: {fixes.get('applied_this_month',0)} | Pending: {fixes.get('pending',0)}
 Tracked keywords: {len(tracked)}
+
+WORK DONE THIS PERIOD:
+{chr(10).join([f"- {t}: {c} fixes applied" for t, c in fixes.get('by_type_this_month',{}).items()]) if fixes.get('by_type_this_month') else '- No fixes applied this period'}
+Resources fixed: {', '.join([f"{c} {t}s" for t, c in fixes.get('by_resource',{}).items()]) if fixes.get('by_resource') else 'None'}
+
+{f"SINCE TRACKING BEGAN ({report.get('since_inception',{}).get('tracking_started','')}):" if report.get('since_inception') else ''}
+{f"- Keywords growth: {report['since_inception']['initial_keywords']} → {kw['total'] if kw else 0} ({report['since_inception']['keywords_growth']:+d})" if report.get('since_inception') and kw else ''}
+{f"- Clicks growth: {report['since_inception']['initial_clicks']} → {kw['total_clicks'] if kw else 0} ({report['since_inception']['clicks_growth']:+d})" if report.get('since_inception') and kw else ''}
+{f"- Position change: {report['since_inception']['position_change']:+.1f} (positive = improved)" if report.get('since_inception') else ''}
+{f"- Total fixes applied: {report['since_inception']['total_fixes_applied']}, Audits run: {report['since_inception']['total_audits']}" if report.get('since_inception') else ''}
+
 {f"Improved: {', '.join([c['query']+' (+'+str(c['change'])+')' for c in kw.get('ranking_changes',{}).get('improved',[])[:5]])}" if kw and kw.get('ranking_changes',{}).get('improved') else ''}
 {f"Declined: {', '.join([c['query']+' ('+str(c['change'])+')' for c in kw.get('ranking_changes',{}).get('declined',[])[:5]])}" if kw and kw.get('ranking_changes',{}).get('declined') else ''}
 
-Write 4 paragraphs: 1) Overall trajectory 2) Keyword performance 3) Work accomplished 4) Next steps. Be specific with numbers. Professional tone."""
+Write 5 paragraphs:
+1) Overall SEO trajectory and health score trend
+2) Organic search performance - clicks, impressions, keyword growth vs last month AND since tracking began
+3) Primary keyword ranking changes and tracked keyword progress
+4) Technical work completed - specific numbers of alt texts added, meta titles fixed, content expanded, etc.
+5) Recommended next steps based on current gaps
+Be specific with numbers. Professional tone."""
 
     try:
         import httpx
