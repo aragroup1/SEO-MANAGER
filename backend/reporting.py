@@ -211,6 +211,18 @@ async def generate_report_data(website_id: int, month: str = None) -> Dict[str, 
         else:
             report["since_inception"] = None
 
+        # ─── GA4 Traffic Data ───
+        try:
+            from ga4_data import fetch_ga4_traffic
+            ga4 = await fetch_ga4_traffic(website_id, days=30)
+            if ga4 and "error" not in ga4:
+                report["ga4_traffic"] = ga4
+            else:
+                report["ga4_traffic"] = None
+        except Exception as ga4_err:
+            print(f"[Report] GA4 data error (non-fatal): {ga4_err}")
+            report["ga4_traffic"] = None
+
         # ─── History Charts ───
         report["audit_history"] = [{"date": h.audit_date.strftime("%Y-%m-%d"), "score": h.health_score, "issues": h.total_issues} for h in db.query(AuditReport).filter(AuditReport.website_id == website_id).order_by(AuditReport.audit_date.asc()).limit(20).all()]
 
