@@ -22,6 +22,7 @@ import GEODashboard from '@/components/GEODashboard';
 import AIStrategist from '@/components/AIStrategist';
 import ReportingDashboard from '@/components/ReportingDashboard';
 import SettingsPanel from '@/components/SettingsPanel';
+import OverviewDashboard from '@/components/OverviewDashboard';
 
 interface Website {
   id: number;
@@ -304,28 +305,7 @@ export default function Dashboard() {
                   )}
 
                   {websites.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {websites.map(site => (
-                        <motion.div key={site.id} whileHover={{ scale: 1.02 }}
-                          className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20 cursor-pointer"
-                          onClick={() => handleSelectWebsite(site.id)}>
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                              <div className={`w-3 h-3 rounded-full ${site.health_score ? (site.health_score >= 70 ? 'bg-green-400' : site.health_score >= 50 ? 'bg-yellow-400' : 'bg-red-400') : 'bg-gray-500'}`} />
-                              <h3 className="text-white font-semibold">{site.domain}</h3>
-                            </div>
-                            <span className="text-xs text-gray-400 capitalize bg-white/10 px-2 py-0.5 rounded-full">{site.site_type}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-gray-400 text-sm">Health Score</span>
-                            <span className={`text-2xl font-bold ${site.health_score ? (site.health_score >= 70 ? 'text-green-400' : site.health_score >= 50 ? 'text-yellow-400' : 'text-red-400') : 'text-gray-500'}`}>
-                              {site.health_score ? Math.round(site.health_score) : '--'}
-                            </span>
-                          </div>
-                          <p className="text-purple-400 text-xs mt-3">Click to view audit →</p>
-                        </motion.div>
-                      ))}
-                    </div>
+                    <OverviewDashboard onSelectWebsite={handleSelectWebsite} selectedWebsite={selectedWebsite} />
                   ) : (
                     <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 border border-white/20 text-center">
                       <Globe className="w-12 h-12 text-purple-400 mx-auto mb-4" />
