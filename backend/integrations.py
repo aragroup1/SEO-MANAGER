@@ -74,6 +74,30 @@ async def get_integration_status(website_id: int, db: Session = Depends(get_db))
     return {"integrations": integrations}
 
 
+@router.get("/{website_id}/debug-wp")
+async def debug_wordpress(website_id: int, db: Session = Depends(get_db)):
+    """Debug endpoint to check WordPress integration state."""
+    integration = db.query(Integration).filter(
+        Integration.website_id == website_id,
+        Integration.integration_type == "wordpress"
+    ).first()
+
+    if not integration:
+        return {"exists": False, "message": "No WordPress integration record found"}
+
+    config = integration.config or {}
+    return {
+        "exists": True,
+        "status": integration.status,
+        "has_access_token": bool(integration.access_token),
+        "access_token_length": len(integration.access_token) if integration.access_token else 0,
+        "account_name": integration.account_name,
+        "config_wp_url": config.get("wp_url", "NOT SET"),
+        "config_username": config.get("username", "NOT SET"),
+        "connected_at": integration.connected_at.isoformat() if integration.connected_at else None,
+    }
+
+
 @router.get("/{website_id}/connected")
 async def get_connected_integrations(website_id: int, db: Session = Depends(get_db)):
     connected = db.query(Integration).filter(
@@ -227,8 +251,11 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
         wp_username = data.get("username", "").strip()
         wp_app_password = data.get("app_password", "").strip()
 
+        print(f"[WordPress] Connect attempt: url='{wp_url}', username='{wp_username}', has_password={bool(wp_app_password)}")
+
         if not wp_url or not wp_username or not wp_app_password:
-            return {"connected": False, "message": "WordPress URL, username, and application password are all required."}
+            print(f"[WordPress] REJECTED: missing fields - url={bool(wp_url)}, user={bool(wp_username)}, pass={bool(wp_app_password)}")
+            return {"connected": False, "message": "WordPress URL, username, and application password are all required. Fill in all three fields."}
 
         # Normalize URL
         if not wp_url.startswith("http"):
@@ -236,20 +263,27 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
         wp_url = wp_url.rstrip("/")
 
         # Test the connection before saving
+        test_url = f"{wp_url}/wp-json/wp/v2/posts?per_page=1"
+        print(f"[WordPress] Testing connection: {test_url}")
         try:
             import httpx as httpx_lib
-            async with httpx_lib.AsyncClient(timeout=10) as test_client:
+            async with httpx_lib.AsyncClient(timeout=15, follow_redirects=True) as test_client:
                 test_resp = await test_client.get(
-                    f"{wp_url}/wp-json/wp/v2/posts?per_page=1",
+                    test_url,
                     auth=(wp_username, wp_app_password)
                 )
+                print(f"[WordPress] Response: {test_resp.status_code}")
                 if test_resp.status_code == 401:
                     return {"connected": False, "message": "Authentication failed. Check your username and application password."}
+                elif test_resp.status_code == 403:
+                    return {"connected": False, "message": "Access forbidden. The application password may not have sufficient permissions."}
                 elif test_resp.status_code == 404:
-                    return {"connected": False, "message": "WordPress REST API not found. Is this a WordPress site?"}
+                    return {"connected": False, "message": "WordPress REST API not found at this URL. Check the URL is correct."}
                 elif test_resp.status_code != 200:
-                    return {"connected": False, "message": f"WordPress returned status {test_resp.status_code}. Check the URL."}
+                    return {"connected": False, "message": f"WordPress returned status {test_resp.status_code}. Check the URL and credentials."}
+                print(f"[WordPress] Connection test PASSED")
         except Exception as e:
+            print(f"[WordPress] Connection test FAILED: {e}")
             return {"connected": False, "message": f"Could not reach WordPress at {wp_url}: {str(e)[:100]}"}
 
         existing = db.query(Integration).filter(
