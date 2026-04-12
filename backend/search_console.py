@@ -450,6 +450,53 @@ async def get_latest_snapshot(website_id: int) -> Dict[str, Any]:
         if not snapshot:
             return {"snapshot": None}
 
+        # Get previous snapshot for comparison
+        prev_snapshot = db.query(KeywordSnapshot)\
+            .filter(KeywordSnapshot.website_id == website_id,
+                    KeywordSnapshot.id != snapshot.id)\
+            .order_by(KeywordSnapshot.snapshot_date.desc())\
+            .first()
+
+        # Build previous position map
+        prev_map = {}
+        prev_clicks_map = {}
+        if prev_snapshot and prev_snapshot.keyword_data:
+            for kw in prev_snapshot.keyword_data:
+                q = kw.get("query", "").lower()
+                prev_map[q] = kw.get("position", 0)
+                prev_clicks_map[q] = kw.get("clicks", 0)
+
+        # Add position_change to each keyword
+        keywords = snapshot.keyword_data[:500] if snapshot.keyword_data else []
+        for kw in keywords:
+            q = kw.get("query", "").lower()
+            prev_pos = prev_map.get(q)
+            if prev_pos and kw.get("position"):
+                kw["position_change"] = round(prev_pos - kw["position"], 1)  # Positive = improved
+            else:
+                kw["position_change"] = None
+            prev_clicks = prev_clicks_map.get(q)
+            if prev_clicks is not None:
+                kw["clicks_change"] = kw.get("clicks", 0) - prev_clicks
+            else:
+                kw["clicks_change"] = None
+
+        # Summary-level changes
+        summary_changes = None
+        if prev_snapshot:
+            summary_changes = {
+                "prev_total_keywords": prev_snapshot.total_keywords,
+                "prev_total_clicks": prev_snapshot.total_clicks,
+                "prev_total_impressions": prev_snapshot.total_impressions,
+                "prev_avg_position": prev_snapshot.avg_position,
+                "keywords_change": snapshot.total_keywords - prev_snapshot.total_keywords,
+                "clicks_change": snapshot.total_clicks - prev_snapshot.total_clicks,
+                "impressions_change": snapshot.total_impressions - prev_snapshot.total_impressions,
+                "position_change": round(prev_snapshot.avg_position - snapshot.avg_position, 1),
+                "prev_date_from": prev_snapshot.date_from.strftime("%Y-%m-%d"),
+                "prev_date_to": prev_snapshot.date_to.strftime("%Y-%m-%d"),
+            }
+
         return {
             "snapshot": {
                 "id": snapshot.id,
@@ -462,7 +509,8 @@ async def get_latest_snapshot(website_id: int) -> Dict[str, Any]:
                 "avg_position": snapshot.avg_position,
                 "avg_ctr": snapshot.avg_ctr,
                 "gsc_property": snapshot.gsc_property,
-                "keywords": snapshot.keyword_data[:500] if snapshot.keyword_data else [],
+                "keywords": keywords,
+                "changes": summary_changes,
             }
         }
     except Exception as e:
