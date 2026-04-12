@@ -384,6 +384,46 @@ app.include_router(strategist_router)
 from report_routes import router as report_router
 app.include_router(report_router)
 
+# --- New Feature Routes ---
+
+# Hub & Spoke Internal Linking
+@app.post("/api/linking/{website_id}/analyze")
+async def analyze_linking(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Analyze internal link structure and generate link suggestions."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from linking_engine import analyze_internal_linking
+    result = await analyze_internal_linking(website_id)
+    return result
+
+
+# Content Decay Detection
+@app.post("/api/decay/{website_id}/analyze")
+async def analyze_decay(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Detect content decay — check freshness vs competitors."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from content_decay import detect_content_decay
+    result = await detect_content_decay(website_id)
+    return result
+
+
+# GA4 Traffic Data
+@app.get("/api/ga4/{website_id}/traffic")
+async def get_ga4_traffic(website_id: int, days: int = 30, db: Session = Depends(get_db)):
+    """Fetch traffic data from Google Analytics 4."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from ga4_data import fetch_ga4_traffic
+    result = await fetch_ga4_traffic(website_id, days=days)
+    return result
+
 # --- AI Overseer ---
 
 @app.post("/api/overseer/{website_id}/run")
@@ -508,7 +548,7 @@ async def _run_daily_audits():
         _daily_audit_running = False
 
 def _schedule_daily_audits():
-    """Schedule daily audits to run every 24 hours."""
+    """Schedule daily audits and weekly overseer runs."""
     import threading
 
     def _daily_loop():
@@ -521,21 +561,50 @@ def _schedule_daily_audits():
             if now >= target:
                 target += timedelta(days=1)
             wait_seconds = (target - now).total_seconds()
-            print(f"[DailyAudit] Next audit in {wait_seconds/3600:.1f} hours (3 AM UTC)")
+            print(f"[Scheduler] Next daily audit in {wait_seconds/3600:.1f} hours (3 AM UTC)")
             time.sleep(wait_seconds)
 
-            # Run audits
+            # Run daily audits
             try:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(_run_daily_audits())
                 loop.close()
             except Exception as e:
-                print(f"[DailyAudit] Scheduler error: {e}")
+                print(f"[Scheduler] Daily audit error: {e}")
 
-    thread = threading.Thread(target=_daily_loop, daemon=True)
-    thread.start()
-    print("[DailyAudit] Scheduler started (runs daily at 3 AM UTC)")
+    def _weekly_loop():
+        """Run full overseer cycle every Monday at 4 AM UTC."""
+        import time
+        while True:
+            from datetime import datetime, timedelta
+            now = datetime.utcnow()
+            # Find next Monday
+            days_until_monday = (7 - now.weekday()) % 7
+            if days_until_monday == 0 and now.hour >= 4:
+                days_until_monday = 7
+            target = (now + timedelta(days=days_until_monday)).replace(
+                hour=4, minute=0, second=0, microsecond=0)
+            wait_seconds = (target - now).total_seconds()
+            print(f"[Scheduler] Next weekly overseer in {wait_seconds/3600:.1f} hours (Monday 4 AM UTC)")
+            time.sleep(wait_seconds)
+
+            # Run full overseer for all websites
+            try:
+                from ai_overseer import run_overseer_background
+                run_overseer_background(None)  # All websites
+                print("[Scheduler] Weekly overseer cycle complete")
+            except Exception as e:
+                print(f"[Scheduler] Weekly overseer error: {e}")
+
+    # Start both scheduler threads
+    daily_thread = threading.Thread(target=_daily_loop, daemon=True)
+    daily_thread.start()
+    print("[Scheduler] Daily audit scheduler started (runs at 3 AM UTC)")
+
+    weekly_thread = threading.Thread(target=_weekly_loop, daemon=True)
+    weekly_thread.start()
+    print("[Scheduler] Weekly overseer scheduler started (runs Monday 4 AM UTC)")
 
 # --- Startup ---
 
