@@ -452,6 +452,9 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           <p className="text-purple-300 mt-1 text-sm">
             {snapshot.gsc_property && <span className="text-gray-500 mr-2">{snapshot.gsc_property}</span>}
             {snapshot.date_from} to {snapshot.date_to}
+            {(snapshot as any).changes && (
+              <span className="text-gray-600 ml-2">· vs {(snapshot as any).changes.prev_date_from} to {(snapshot as any).changes.prev_date_to}</span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -601,14 +604,21 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
-          { icon: MousePointerClick, color: 'text-blue-400', value: snapshot.total_clicks.toLocaleString(), label: 'Total Clicks' },
-          { icon: Eye, color: 'text-purple-400', value: snapshot.total_impressions.toLocaleString(), label: 'Impressions' },
-          { icon: Target, color: 'text-green-400', value: String(snapshot.avg_position), label: 'Avg Position' },
+          { icon: MousePointerClick, color: 'text-blue-400', value: snapshot.total_clicks.toLocaleString(), label: 'Total Clicks', change: (snapshot as any).changes?.clicks_change },
+          { icon: Eye, color: 'text-purple-400', value: snapshot.total_impressions.toLocaleString(), label: 'Impressions', change: (snapshot as any).changes?.impressions_change },
+          { icon: Target, color: 'text-green-400', value: String(snapshot.avg_position), label: 'Avg Position', change: (snapshot as any).changes?.position_change, invertPositive: false },
           { icon: BarChart3, color: 'text-yellow-400', value: snapshot.avg_ctr + '%', label: 'Avg CTR' },
-          { icon: Hash, color: 'text-pink-400', value: snapshot.total_keywords.toLocaleString(), label: 'Keywords' },
+          { icon: Hash, color: 'text-pink-400', value: snapshot.total_keywords.toLocaleString(), label: 'Keywords', change: (snapshot as any).changes?.keywords_change },
         ].map(c => (
           <div key={c.label} className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 text-center">
-            <c.icon className={`w-5 h-5 ${c.color} mx-auto mb-2`} /><p className="text-2xl font-bold text-white">{c.value}</p><p className="text-xs text-gray-400 mt-1">{c.label}</p>
+            <c.icon className={`w-5 h-5 ${c.color} mx-auto mb-2`} />
+            <p className="text-2xl font-bold text-white">{c.value}</p>
+            <p className="text-xs text-gray-400 mt-1">{c.label}</p>
+            {c.change !== undefined && c.change !== null && c.change !== 0 && (
+              <p className={`text-xs mt-1 ${c.label === 'Avg Position' ? (c.change > 0 ? 'text-green-400' : 'text-red-400') : (c.change > 0 ? 'text-green-400' : 'text-red-400')}`}>
+                {c.change > 0 ? '↑' : '↓'} {c.label === 'Avg Position' ? (c.change > 0 ? '+' : '') + c.change + ' pos' : (c.change > 0 ? '+' : '') + c.change.toLocaleString()}
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -717,7 +727,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           </div>
         )}
 
-        <div className="grid grid-cols-14 gap-1 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400" style={{ gridTemplateColumns: '2.5rem 1fr 4.5rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}>
+        <div className="grid grid-cols-14 gap-1 px-4 py-3 border-b border-white/10 text-xs font-medium text-gray-400" style={{ gridTemplateColumns: '2.5rem 1fr 4.5rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem 3rem' }}>
           <div></div>
           <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => handleSort('query')}>Keyword <SortIcon field="query" /></div>
           <div className="text-center">Country</div>
@@ -726,15 +736,17 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('impressions')}>Impr <SortIcon field="impressions" /></div>
           <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('ctr')}>CTR <SortIcon field="ctr" /></div>
           <div className="flex items-center gap-1 cursor-pointer hover:text-white justify-end" onClick={() => handleSort('position')}>Position <SortIcon field="position" /></div>
+          <div className="text-center">Change</div>
         </div>
 
         <div className="max-h-[600px] overflow-y-auto">
           {filteredKeywords.slice(0, 200).map((kw, idx) => {
             const tracked = isTracked(kw.query);
             const vol = searchVolumes[kw.query.toLowerCase()];
+            const posChange = (kw as any).position_change;
             return (
               <div key={kw.query + idx} className="grid gap-1 px-4 py-2.5 border-b border-white/5 hover:bg-white/5 transition-all items-center cursor-pointer"
-                style={{ gridTemplateColumns: '2.5rem 1fr 4.5rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem' }}
+                style={{ gridTemplateColumns: '2.5rem 1fr 4.5rem 3.5rem 3.5rem 3rem 2.5rem 4.5rem 3rem' }}
                 onClick={() => openKeywordDetail(kw)}>
                 <div>
                   <button onClick={e => { e.stopPropagation(); if (!tracked) trackKeyword(kw); }}
@@ -765,6 +777,15 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
                   <div className={`px-1 py-0.5 rounded text-[10px] border ${posBg(kw.position)} ${posColor(kw.position)}`}>
                     {kw.position <= 3 ? '🏆' : kw.position <= 10 ? 'P1' : kw.position <= 20 ? 'P2' : kw.position <= 50 ? 'P3+' : '50+'}
                   </div>
+                </div>
+                <div className="text-center">
+                  {posChange !== null && posChange !== undefined && posChange !== 0 ? (
+                    <span className={`text-xs font-bold ${posChange > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {posChange > 0 ? '▲' : '▼'}{Math.abs(posChange)}
+                    </span>
+                  ) : (
+                    <span className="text-gray-700 text-xs">—</span>
+                  )}
                 </div>
               </div>
             );
