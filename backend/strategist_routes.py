@@ -1,10 +1,48 @@
-# backend/strategist_routes.py - AI SEO Strategist Chat API
+# backend/strategist_routes.py - AI SEO Strategist API Routes
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
+from collections import defaultdict
 
-from database import get_db, Website
+from database import get_db, Website, KeywordSnapshot
 
 router = APIRouter(prefix="/api/strategist", tags=["strategist"])
+
+
+@router.post("/{website_id}/generate-strategy")
+async def generate_strategy(website_id: int, db: Session = Depends(get_db)):
+    """Generate a comprehensive master SEO strategy for this website.
+    This is the 'general's battle plan' — the overarching strategy."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from ai_strategist import generate_master_strategy
+    result = await generate_master_strategy(website_id)
+    return result
+
+
+@router.post("/{website_id}/weekly-plan")
+async def weekly_plan(website_id: int, db: Session = Depends(get_db)):
+    """Generate a specific action plan for this week based on current data."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from ai_strategist import generate_weekly_plan
+    result = await generate_weekly_plan(website_id)
+    return result
+
+
+@router.get("/{website_id}/portfolio")
+async def portfolio_analysis(website_id: int, db: Session = Depends(get_db)):
+    """Analyze the tracked keyword portfolio for conflicts and priorities."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from ai_strategist import analyze_keyword_portfolio
+    result = await analyze_keyword_portfolio(website_id)
+    return result
 
 
 @router.post("/{website_id}/chat")
@@ -29,9 +67,6 @@ async def chat(website_id: int, request: Request, db: Session = Depends(get_db))
 @router.get("/{website_id}/cannibalization")
 async def detect_cannibalization(website_id: int, db: Session = Depends(get_db)):
     """Detect keyword cannibalization across the site."""
-    from database import KeywordSnapshot
-    from collections import defaultdict
-
     snapshot = db.query(KeywordSnapshot)\
         .filter(KeywordSnapshot.website_id == website_id)\
         .order_by(KeywordSnapshot.snapshot_date.desc()).first()
@@ -39,7 +74,6 @@ async def detect_cannibalization(website_id: int, db: Session = Depends(get_db))
     if not snapshot or not snapshot.keyword_data:
         return {"cannibalization": [], "message": "No keyword data. Sync keywords first."}
 
-    # Group by query — find keywords with multiple ranking pages
     keyword_pages = defaultdict(list)
     for kw in snapshot.keyword_data:
         query = kw.get("query", "")
@@ -52,7 +86,6 @@ async def detect_cannibalization(website_id: int, db: Session = Depends(get_db))
                 "impressions": kw.get("impressions", 0),
             })
 
-    # Filter to keywords with 2+ distinct pages
     cannibalizing = []
     for query, pages in keyword_pages.items():
         unique_pages = {}
@@ -60,7 +93,6 @@ async def detect_cannibalization(website_id: int, db: Session = Depends(get_db))
             url = p["page"]
             if url not in unique_pages or p["clicks"] > unique_pages[url].get("clicks", 0):
                 unique_pages[url] = p
-
         if len(unique_pages) > 1:
             cannibalizing.append({
                 "keyword": query,
@@ -68,10 +100,6 @@ async def detect_cannibalization(website_id: int, db: Session = Depends(get_db))
                 "page_count": len(unique_pages),
             })
 
-    # Sort by page count desc, then by total impressions
     cannibalizing.sort(key=lambda x: (x["page_count"], sum(p.get("impressions", 0) for p in x["pages"])), reverse=True)
 
-    return {
-        "total_cannibalizing": len(cannibalizing),
-        "cannibalization": cannibalizing[:50],
-    }
+    return {"total_cannibalizing": len(cannibalizing), "cannibalization": cannibalizing[:50]}
