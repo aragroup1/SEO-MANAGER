@@ -1,0 +1,249 @@
+# backend/content_writer.py - AI Content Writer
+# Generates SEO-optimized blog posts, product descriptions, and landing pages
+# Content goes through an approval queue before being published.
+import os
+import json
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+import httpx
+from dotenv import load_dotenv
+
+from database import SessionLocal, Website, ContentItem, TrackedKeyword, KeywordSnapshot
+
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
+
+
+async def generate_content(
+    website_id: int,
+    content_type: str = "blog_post",
+    topic: str = "",
+    target_keywords: List[str] = None,
+    word_count: int = 800,
+    tone: str = "professional",
+    additional_instructions: str = "",
+) -> Dict[str, Any]:
+    """
+    Generate SEO-optimized content using AI.
+    Content types: blog_post, product_description, landing_page, faq_page, how_to_guide
+    """
+    db = SessionLocal()
+    try:
+        website = db.query(Website).filter(Website.id == website_id).first()
+        if not website:
+            return {"error": "Website not found"}
+
+        if not GEMINI_API_KEY:
+            return {"error": "AI API key not configured."}
+
+        if not topic:
+            return {"error": "Topic is required."}
+
+        domain = website.domain
+
+        # Get existing keyword context
+        existing_keywords = []
+        latest_snap = db.query(KeywordSnapshot).filter(
+            KeywordSnapshot.website_id == website_id
+        ).order_by(KeywordSnapshot.snapshot_date.desc()).first()
+        if latest_snap and latest_snap.keyword_data:
+            existing_keywords = [kw.get("query", "") for kw in latest_snap.keyword_data[:50]]
+
+        tracked = db.query(TrackedKeyword).filter(
+            TrackedKeyword.website_id == website_id
+        ).all()
+        tracked_keywords = [tk.keyword for tk in tracked]
+
+        type_config = {
+            "blog_post": {
+                "label": "Blog Post",
+                "instructions": f"Write a comprehensive, SEO-optimized blog post of {word_count}+ words.",
+                "structure": "Include: engaging introduction, H2/H3 subheadings, bullet points where appropriate, statistics/data, internal linking suggestions, conclusion with CTA.",
+            },
+            "product_description": {
+                "label": "Product Description",
+                "instructions": f"Write an SEO-optimized product description of {word_count}+ words.",
+                "structure": "Include: compelling opening, key features, benefits, specifications, use cases, FAQ section.",
+            },
+            "landing_page": {
+                "label": "Landing Page",
+                "instructions": f"Write SEO-optimized landing page copy of {word_count}+ words.",
+                "structure": "Include: headline, subheadline, value proposition, features/benefits, social proof section, FAQ, strong CTA.",
+            },
+            "faq_page": {
+                "label": "FAQ Page",
+                "instructions": f"Write a comprehensive FAQ page with 10-15 questions and answers.",
+                "structure": "Include: common questions customers ask, detailed answers, internal links, FAQ Schema markup suggestion.",
+            },
+            "how_to_guide": {
+                "label": "How-To Guide",
+                "instructions": f"Write a detailed how-to guide of {word_count}+ words.",
+                "structure": "Include: step-by-step instructions, images/diagram suggestions, tips, common mistakes, related resources.",
+            },
+        }
+
+        config = type_config.get(content_type, type_config["blog_post"])
+
+        prompt = f"""You are an expert SEO content writer for {domain} ({website.site_type} website).
+
+TASK: {config['instructions']}
+
+Topic: {topic}
+Target Keywords: {', '.join(target_keywords or [topic])}
+Tone: {tone}
+{f'Additional Instructions: {additional_instructions}' if additional_instructions else ''}
+
+CONTEXT:
+- Website: {domain}
+- Existing keywords the site ranks for: {', '.join(existing_keywords[:20]) if existing_keywords else 'None yet'}
+- Priority keywords being tracked: {', '.join(tracked_keywords) if tracked_keywords else 'None yet'}
+
+CONTENT STRUCTURE:
+{config['structure']}
+
+SEO REQUIREMENTS:
+1. Use the primary keyword in the title, first paragraph, and 2-3 H2 headings
+2. Include LSI keywords naturally throughout
+3. Write for humans first, search engines second
+4. Include a compelling meta title (30-60 chars) and meta description (120-155 chars)
+5. Suggest 3-5 internal linking opportunities (pages that should link TO this content)
+6. Include a FAQ section with 3-5 questions (for FAQ Schema)
+7. End with a clear call-to-action
+
+FORMAT YOUR RESPONSE AS JSON:
+{{
+  "title": "The page/post title",
+  "meta_title": "SEO title tag (30-60 chars)",
+  "meta_description": "Meta description (120-155 chars)",
+  "content_html": "<h1>Title</h1><p>Content in HTML format...</p>",
+  "word_count": 850,
+  "target_keywords": ["primary", "secondary", "tertiary"],
+  "internal_link_suggestions": [
+    {{"anchor_text": "text to link", "suggested_page": "/relevant-page", "reason": "why this link"}}
+  ],
+  "faq": [
+    {{"question": "Q?", "answer": "A."}}
+  ],
+  "estimated_traffic_potential": "low/medium/high with reasoning"
+}}"""
+
+        async with httpx.AsyncClient(timeout=90) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"maxOutputTokens": 8000, "temperature": 0.5}
+                }
+            )
+
+            if resp.status_code == 200:
+                text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                text = text.replace("```json", "").replace("```", "").strip()
+
+                try:
+                    content_data = json.loads(text)
+                except:
+                    content_data = {"title": topic, "content_html": text, "meta_title": topic[:60], "meta_description": topic[:155]}
+
+                # Save to database
+                content_item = ContentItem(
+                    website_id=website_id,
+                    title=content_data.get("title", topic),
+                    content_type=config["label"],
+                    status="Draft",
+                    keywords_target=target_keywords or [topic],
+                    ai_generated_content=json.dumps(content_data),
+                )
+                db.add(content_item)
+                db.commit()
+                db.refresh(content_item)
+
+                return {
+                    "content_id": content_item.id,
+                    "content": content_data,
+                    "status": "draft",
+                    "message": f"{config['label']} generated. Review and edit before publishing."
+                }
+            elif resp.status_code == 429:
+                return {"error": "AI rate limited. Try again in a minute or enable Gemini billing."}
+            else:
+                return {"error": f"AI API error: {resp.status_code}"}
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+async def suggest_content_ideas(website_id: int) -> Dict[str, Any]:
+    """Use AI to suggest content ideas based on keyword gaps and competitor analysis."""
+    db = SessionLocal()
+    try:
+        website = db.query(Website).filter(Website.id == website_id).first()
+        if not website:
+            return {"error": "Website not found"}
+
+        if not GEMINI_API_KEY:
+            return {"error": "AI API key not configured."}
+
+        # Gather context
+        latest_snap = db.query(KeywordSnapshot).filter(
+            KeywordSnapshot.website_id == website_id
+        ).order_by(KeywordSnapshot.snapshot_date.desc()).first()
+
+        keywords = []
+        if latest_snap and latest_snap.keyword_data:
+            keywords = [{"query": kw.get("query",""), "position": kw.get("position",0), "impressions": kw.get("impressions",0)} for kw in latest_snap.keyword_data[:30]]
+
+        tracked = db.query(TrackedKeyword).filter(TrackedKeyword.website_id == website_id).all()
+        tracked_kws = [tk.keyword for tk in tracked]
+
+        prompt = f"""You are a content strategist for {website.domain}.
+
+Current keywords ranking:
+{json.dumps(keywords[:20], indent=1) if keywords else 'No keyword data yet'}
+
+Priority keywords: {', '.join(tracked_kws) if tracked_kws else 'None set'}
+
+Suggest 10 content ideas that would:
+1. Target keywords the site doesn't rank for yet
+2. Support existing ranking keywords (hub & spoke)
+3. Answer questions customers likely search for
+4. Fill content gaps vs competitors
+
+Return JSON:
+[
+  {{
+    "title": "Suggested blog post title",
+    "content_type": "blog_post|how_to_guide|faq_page|landing_page",
+    "target_keyword": "primary keyword to target",
+    "estimated_volume": "low/medium/high",
+    "difficulty": "easy/medium/hard",
+    "why": "brief reason this content would help rankings",
+    "supports_keywords": ["existing keywords this would boost"]
+  }}
+]"""
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"maxOutputTokens": 3000, "temperature": 0.5}
+                }
+            )
+            if resp.status_code == 200:
+                text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                text = text.replace("```json", "").replace("```", "").strip()
+                try:
+                    ideas = json.loads(text)
+                    return {"ideas": ideas}
+                except:
+                    return {"ideas": [], "raw": text}
+            return {"error": f"AI error: {resp.status_code}"}
+
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        db.close()
