@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import ApprovalQueue from '@/components/ApprovalQueue';
 import ErrorMonitor from '@/components/ErrorMonitor';
-import ContentCalendar from '@/components/ContentCalendar';
+import ContentWriter from '@/components/ContentWriter';
 import CompetitorAnalysis from '@/components/CompetitorAnalysis';
 import AuditDashboard from '@/components/AuditDashboard';
 import WebsiteManager from '@/components/WebsiteManager';
@@ -95,7 +95,7 @@ export default function Dashboard() {
     { id: 'divider2', label: '', icon: null },
     { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
     { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
-    { id: 'content', label: 'Content', icon: Calendar },
+    { id: 'content', label: 'Content Writer', icon: Calendar },
     { id: 'competitors', label: 'Competitors', icon: Users },
     { id: 'divider3', label: '', icon: null },
     { id: 'reports', label: 'Reports', icon: FileText },
@@ -355,7 +355,7 @@ export default function Dashboard() {
 
               {activeTab === 'content' && selectedWebsite && (
                 <motion.div key={`content-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
-                  <ContentCalendar websiteId={selectedWebsite} />
+                  <ContentWriter websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
