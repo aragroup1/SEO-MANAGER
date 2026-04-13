@@ -350,6 +350,71 @@ async def fix_error(error_id: int):
     await asyncio.sleep(1)
     return {"status": "success", "message": f"Error {error_id} fix initiated"}
 
+# --- Content Writer ---
+
+@app.post("/api/content/{website_id}/generate")
+async def generate_content_endpoint(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Generate AI content — blog post, product description, landing page, etc."""
+    data = await request.json()
+    from content_writer import generate_content
+    result = await generate_content(
+        website_id=website_id,
+        content_type=data.get("content_type", "blog_post"),
+        topic=data.get("topic", ""),
+        target_keywords=data.get("target_keywords", []),
+        word_count=data.get("word_count", 800),
+        tone=data.get("tone", "professional"),
+        additional_instructions=data.get("instructions", ""),
+    )
+    return result
+
+@app.post("/api/content/{website_id}/ideas")
+async def suggest_content_ideas_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Get AI-suggested content ideas based on keyword gaps."""
+    from content_writer import suggest_content_ideas
+    result = await suggest_content_ideas(website_id)
+    return result
+
+@app.get("/api/content/{website_id}/list")
+async def list_content(website_id: int, db: Session = Depends(get_db)):
+    """List all generated content for a website."""
+    items = db.query(ContentItem).filter(ContentItem.website_id == website_id).order_by(ContentItem.id.desc()).all()
+    return {
+        "content": [
+            {
+                "id": item.id, "title": item.title, "content_type": item.content_type,
+                "status": item.status, "keywords": item.keywords_target or [],
+                "created_at": item.publish_date.isoformat() if item.publish_date else None,
+                "has_content": bool(item.ai_generated_content),
+            }
+            for item in items
+        ]
+    }
+
+@app.get("/api/content/{website_id}/{content_id}")
+async def get_content_item(website_id: int, content_id: int, db: Session = Depends(get_db)):
+    """Get a specific content item with full generated content."""
+    item = db.query(ContentItem).filter(ContentItem.id == content_id, ContentItem.website_id == website_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Content not found")
+    content_data = {}
+    if item.ai_generated_content:
+        try:
+            content_data = json.loads(item.ai_generated_content)
+        except:
+            content_data = {"content_html": item.ai_generated_content}
+    return {"id": item.id, "title": item.title, "content_type": item.content_type, "status": item.status, "keywords": item.keywords_target, "content": content_data}
+
+@app.delete("/api/content/{website_id}/{content_id}")
+async def delete_content_item(website_id: int, content_id: int, db: Session = Depends(get_db)):
+    """Delete a content item."""
+    item = db.query(ContentItem).filter(ContentItem.id == content_id, ContentItem.website_id == website_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Content not found")
+    db.delete(item)
+    db.commit()
+    return {"deleted": True}
+
 # --- Competitor Analysis ---
 
 @app.post("/api/competitors/{website_id}/analyze")
