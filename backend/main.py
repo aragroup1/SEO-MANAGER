@@ -10,6 +10,7 @@ import os
 from dotenv import load_dotenv
 import json
 import secrets
+import hashlib
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -30,6 +31,100 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Simple Auth System ───
+# Set these in Railway env vars:
+#   AUTH_USERNAME=arman
+#   AUTH_PASSWORD=your_secure_password
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "admin")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
+
+# In-memory session store (survives within a single deployment)
+active_sessions: Dict[str, datetime] = {}
+SESSION_EXPIRY_HOURS = 72  # 3 days
+
+# Public routes that don't need auth
+PUBLIC_ROUTES = {"/health", "/api/auth/login", "/api/auth/check", "/docs", "/openapi.json"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Check auth token on all API requests (except public routes)."""
+    path = request.url.path
+
+    # Allow public routes
+    if path in PUBLIC_ROUTES or not AUTH_PASSWORD:
+        return await call_next(request)
+
+    # Allow OAuth callbacks (Google needs to redirect back)
+    if "/oauth/" in path or "/callback" in path:
+        return await call_next(request)
+
+    # Allow CORS preflight
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # Check for auth token
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+
+    if not token or token not in active_sessions:
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+    # Check expiry
+    if active_sessions[token] < datetime.utcnow():
+        del active_sessions[token]
+        return JSONResponse(status_code=401, content={"detail": "Session expired"})
+
+    return await call_next(request)
+
+
+@app.post("/api/auth/login")
+async def login(request: Request):
+    """Login with username + password, returns a session token."""
+    data = await request.json()
+    username = data.get("username", "")
+    password = data.get("password", "")
+
+    if not AUTH_PASSWORD:
+        # No password set = auth disabled, give a token
+        token = secrets.token_urlsafe(32)
+        active_sessions[token] = datetime.utcnow() + timedelta(hours=SESSION_EXPIRY_HOURS)
+        return {"success": True, "token": token, "message": "Auth disabled — no password set"}
+
+    if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+        token = secrets.token_urlsafe(32)
+        active_sessions[token] = datetime.utcnow() + timedelta(hours=SESSION_EXPIRY_HOURS)
+        print(f"[Auth] Login successful for '{username}'")
+        return {"success": True, "token": token}
+
+    print(f"[Auth] Login FAILED for '{username}'")
+    return JSONResponse(status_code=401, content={"success": False, "message": "Invalid username or password"})
+
+
+@app.get("/api/auth/check")
+async def check_auth(request: Request):
+    """Check if a token is still valid."""
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+
+    if not AUTH_PASSWORD:
+        return {"authenticated": True, "auth_required": False}
+
+    if token and token in active_sessions and active_sessions[token] > datetime.utcnow():
+        return {"authenticated": True, "auth_required": True}
+
+    return {"authenticated": False, "auth_required": True}
+
+
+@app.post("/api/auth/logout")
+async def logout(request: Request):
+    """Invalidate a session token."""
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    if token in active_sessions:
+        del active_sessions[token]
+    return {"success": True}
 
 # --- Pydantic Schemas ---
 class WebsiteCreate(BaseModel):
