@@ -854,18 +854,96 @@ class WordPressFixEngine:
 
         return fixes
 
-    # ─── Apply fixes via WP REST API ───
+    # ─── Apply fixes via WP REST API (with XML-RPC fallback) ───
 
     async def _api_put(self, endpoint: str, data: Dict) -> Optional[Any]:
+        """Try REST API first, fall back to XML-RPC if blocked by security plugin."""
+        # Try REST API
         try:
             async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
                 resp = await client.post(f"{self.api_base}/{endpoint}", json=data, headers=self.headers)
                 if resp.status_code in [200, 201]:
                     return resp.json()
-                print(f"[WP API] PUT {endpoint} failed: {resp.status_code} {resp.text[:200]}")
-                return None
+                error_msg = resp.text[:200]
+                print(f"[WP API] REST PUT {endpoint} failed: {resp.status_code} {error_msg}")
+
+                # If REST API blocked (401/403 with rest_cannot_edit), try XML-RPC
+                if resp.status_code in [401, 403] and "rest_cannot_edit" in error_msg:
+                    print(f"[WP API] REST blocked by security plugin, trying XML-RPC...")
+                    return await self._xmlrpc_edit(endpoint, data)
         except Exception as e:
-            print(f"[WP API] PUT {endpoint} error: {e}")
+            print(f"[WP API] REST PUT {endpoint} error: {e}")
+        return None
+
+    async def _xmlrpc_edit(self, endpoint: str, data: Dict) -> Optional[Any]:
+        """Edit a WordPress post/page via XML-RPC (works when REST API is blocked by security plugins)."""
+        try:
+            import base64
+            # Parse endpoint like "posts/123" or "pages/456"
+            parts = endpoint.split("/")
+            if len(parts) < 2:
+                print(f"[WP XML-RPC] Cannot parse endpoint: {endpoint}")
+                return None
+            post_id = parts[1]
+
+            # Extract username and password from Basic auth header
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Basic "):
+                return None
+            decoded = base64.b64decode(auth_header.split(" ")[1]).decode()
+            username, password = decoded.split(":", 1)
+
+            # Build XML-RPC payload for wp.editPost
+            # Map REST API fields to XML-RPC struct
+            content_struct = ""
+            if "content" in data:
+                escaped = data["content"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content_struct += f"<member><name>post_content</name><value><string>{escaped}</string></value></member>"
+            if "excerpt" in data:
+                escaped = data["excerpt"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content_struct += f"<member><name>post_excerpt</name><value><string>{escaped}</string></value></member>"
+            if "title" in data:
+                escaped = data["title"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content_struct += f"<member><name>post_title</name><value><string>{escaped}</string></value></member>"
+
+            if not content_struct:
+                return None
+
+            xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+<methodCall>
+  <methodName>wp.editPost</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>{username}</string></value></param>
+    <param><value><string>{password}</string></value></param>
+    <param><value><int>{post_id}</int></value></param>
+    <param><value><struct>{content_struct}</struct></value></param>
+  </params>
+</methodCall>"""
+
+            xmlrpc_url = f"{self.wp_url}/xmlrpc.php"
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.post(xmlrpc_url, content=xml_payload.encode(),
+                    headers={"Content-Type": "text/xml; charset=utf-8"})
+
+                if resp.status_code == 200 and "<boolean>1</boolean>" in resp.text:
+                    print(f"[WP XML-RPC] Successfully edited post {post_id}")
+                    return {"id": int(post_id), "status": "updated via XML-RPC"}
+                elif resp.status_code == 200 and "<name>faultString</name>" in resp.text:
+                    # Parse error
+                    import re
+                    fault = re.search(r"<string>(.*?)</string>", resp.text)
+                    error = fault.group(1) if fault else "Unknown XML-RPC error"
+                    print(f"[WP XML-RPC] Edit post {post_id} failed: {error}")
+                    return None
+                elif resp.status_code == 403:
+                    print(f"[WP XML-RPC] XML-RPC also blocked (403). Security plugin blocks both REST and XML-RPC.")
+                    return None
+                else:
+                    print(f"[WP XML-RPC] Unexpected: {resp.status_code} {resp.text[:200]}")
+                    return None
+        except Exception as e:
+            print(f"[WP XML-RPC] Error: {e}")
             return None
 
     async def apply_fix(self, fix: ProposedFix) -> Tuple[bool, str]:
