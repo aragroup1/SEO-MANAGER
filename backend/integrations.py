@@ -262,58 +262,117 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
             wp_url = "https://" + wp_url
         wp_url = wp_url.rstrip("/")
 
-        # Test the connection before saving
+        # Remove spaces from app password (WordPress displays them with spaces but they should be stripped)
+        wp_app_password = wp_app_password.replace(" ", "")
+
+        # Test the connection — both READ and WRITE
         test_url = f"{wp_url}/wp-json/wp/v2/posts?per_page=1"
         print(f"[WordPress] Testing connection: {test_url}")
         try:
             import httpx as httpx_lib
+            import base64
+            # Use explicit Authorization header instead of auth tuple
+            auth_string = base64.b64encode(f"{wp_username}:{wp_app_password}".encode()).decode()
+            headers = {"Authorization": f"Basic {auth_string}"}
+
             async with httpx_lib.AsyncClient(timeout=15, follow_redirects=True) as test_client:
-                test_resp = await test_client.get(
-                    test_url,
-                    auth=(wp_username, wp_app_password)
-                )
-                print(f"[WordPress] Response: {test_resp.status_code}")
+                # Test 1: Read
+                test_resp = await test_client.get(test_url, headers=headers)
+                print(f"[WordPress] Read test response: {test_resp.status_code}")
                 if test_resp.status_code == 401:
-                    return {"connected": False, "message": "Authentication failed. Check your username and application password."}
+                    return {"connected": False, "message": "Authentication failed (401). Check username and application password. Make sure there are no extra spaces."}
                 elif test_resp.status_code == 403:
-                    return {"connected": False, "message": "Access forbidden. The application password may not have sufficient permissions."}
+                    return {"connected": False, "message": "Access forbidden (403). The user may not have REST API access."}
                 elif test_resp.status_code == 404:
-                    return {"connected": False, "message": "WordPress REST API not found at this URL. Check the URL is correct."}
+                    return {"connected": False, "message": "WordPress REST API not found. Check the URL is correct."}
                 elif test_resp.status_code != 200:
-                    return {"connected": False, "message": f"WordPress returned status {test_resp.status_code}. Check the URL and credentials."}
-                print(f"[WordPress] Connection test PASSED")
+                    return {"connected": False, "message": f"WordPress returned status {test_resp.status_code}."}
+
+                # Test 2: Check user capabilities via /wp/v2/users/me
+                me_resp = await test_client.get(f"{wp_url}/wp-json/wp/v2/users/me?context=edit", headers=headers)
+                user_role = "unknown"
+                can_edit = False
+                if me_resp.status_code == 200:
+                    me_data = me_resp.json()
+                    user_role = ", ".join(me_data.get("roles", ["unknown"]))
+                    caps = me_data.get("capabilities", {})
+                    can_edit = caps.get("edit_pages", False) or caps.get("edit_posts", False)
+                    print(f"[WordPress] User roles: {user_role}, can_edit_pages: {caps.get('edit_pages')}, can_edit_posts: {caps.get('edit_posts')}")
+                else:
+                    print(f"[WordPress] /users/me failed: {me_resp.status_code} {me_resp.text[:200]}")
+
+                # Test 3: Try a harmless write test — read a post and write it back unchanged
+                write_ok = False
+                write_msg = ""
+                if test_resp.status_code == 200:
+                    posts = test_resp.json()
+                    if posts:
+                        test_post = posts[0]
+                        test_post_id = test_post["id"]
+                        test_post_type = "posts"
+                        # Try updating the post with its own title (no-op)
+                        write_resp = await test_client.post(
+                            f"{wp_url}/wp-json/wp/v2/{test_post_type}/{test_post_id}",
+                            headers=headers,
+                            json={"title": test_post.get("title", {}).get("raw", test_post.get("title", {}).get("rendered", "Test"))}
+                        )
+                        print(f"[WordPress] Write test response: {write_resp.status_code} {write_resp.text[:200]}")
+                        if write_resp.status_code in [200, 201]:
+                            write_ok = True
+                        else:
+                            try:
+                                err = write_resp.json()
+                                write_msg = err.get("message", str(write_resp.status_code))
+                            except:
+                                write_msg = f"Status {write_resp.status_code}"
+
+                print(f"[WordPress] Connection test PASSED (read=OK, write={'OK' if write_ok else 'FAILED: ' + write_msg})")
+
+                if not write_ok:
+                    # Still save the connection but warn
+                    warning = f"Connected but CANNOT edit content. User '{wp_username}' (role: {user_role}) doesn't have write permissions. {write_msg}"
+                    print(f"[WordPress] WARNING: {warning}")
+                    # Save anyway so they can try different credentials
+                    _save_wp_integration(db, website_id, wp_url, wp_username, wp_app_password)
+                    return {"connected": True, "message": f"WordPress connected (read-only). ⚠️ {warning}. Fixes will fail until write access is granted."}
+
         except Exception as e:
             print(f"[WordPress] Connection test FAILED: {e}")
             return {"connected": False, "message": f"Could not reach WordPress at {wp_url}: {str(e)[:100]}"}
 
-        existing = db.query(Integration).filter(
-            Integration.website_id == website_id,
-            Integration.integration_type == "wordpress"
-        ).first()
-
-        if existing:
-            existing.status = "active"
-            existing.connected_at = datetime.utcnow()
-            existing.account_name = wp_url
-            existing.access_token = wp_app_password
-            existing.config = {"wp_url": wp_url, "username": wp_username}
-        else:
-            new_integration = Integration(
-                website_id=website_id,
-                integration_type="wordpress",
-                status="active",
-                connected_at=datetime.utcnow(),
-                account_name=wp_url,
-                access_token=wp_app_password,
-                config={"wp_url": wp_url, "username": wp_username},
-                scopes=[]
-            )
-            db.add(new_integration)
-
-        db.commit()
-        return {"connected": True, "message": f"WordPress connected: {wp_url}"}
+        _save_wp_integration(db, website_id, wp_url, wp_username, wp_app_password)
+        return {"connected": True, "message": f"WordPress connected: {wp_url} (read + write verified ✓)"}
 
     return {"connected": False, "message": "Integration type not handled"}
+
+
+def _save_wp_integration(db, website_id, wp_url, wp_username, wp_app_password):
+    """Save WordPress integration credentials."""
+    existing = db.query(Integration).filter(
+        Integration.website_id == website_id,
+        Integration.integration_type == "wordpress"
+    ).first()
+
+    if existing:
+        existing.status = "active"
+        existing.connected_at = datetime.utcnow()
+        existing.account_name = wp_url
+        existing.access_token = wp_app_password
+        existing.config = {"wp_url": wp_url, "username": wp_username}
+    else:
+        new_integration = Integration(
+            website_id=website_id,
+            integration_type="wordpress",
+            status="active",
+            connected_at=datetime.utcnow(),
+            account_name=wp_url,
+            access_token=wp_app_password,
+            config={"wp_url": wp_url, "username": wp_username},
+            scopes=[]
+        )
+        db.add(new_integration)
+
+    db.commit()
 
 
 @router.post("/{website_id}/set-gsc-property")
