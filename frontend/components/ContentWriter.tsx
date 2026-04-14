@@ -310,7 +310,20 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
                             <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded">{idea.target_keyword}</span>
                             <span className="text-xs text-gray-500">Vol: {idea.estimated_volume}</span>
                             <span className="text-xs text-gray-500">Diff: {idea.difficulty}</span>
+                            {(idea as any).road_to_one_connection && (
+                              <span className="text-xs bg-green-500/10 text-green-400 px-2 py-0.5 rounded flex items-center gap-1">
+                                <Target className="w-3 h-3" /> R2#1: {(idea as any).road_to_one_connection}
+                              </span>
+                            )}
                           </div>
+                          {idea.supports_keywords && idea.supports_keywords.length > 0 && (
+                            <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                              <span className="text-[10px] text-gray-600">Supports:</span>
+                              {idea.supports_keywords.slice(0, 3).map((sk, j) => (
+                                <span key={j} className="text-[10px] bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded">{sk}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <button onClick={() => { setTopic(idea.title); setContentType(idea.content_type); setKeywords(idea.target_keyword); setActiveTab('create'); }}
