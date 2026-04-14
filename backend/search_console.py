@@ -468,18 +468,42 @@ async def get_latest_snapshot(website_id: int) -> Dict[str, Any]:
 
         # Add position_change to each keyword
         keywords = snapshot.keyword_data[:500] if snapshot.keyword_data else []
+        current_queries = set()
         for kw in keywords:
             q = kw.get("query", "").lower()
+            current_queries.add(q)
             prev_pos = prev_map.get(q)
             if prev_pos and kw.get("position"):
                 kw["position_change"] = round(prev_pos - kw["position"], 1)  # Positive = improved
+                kw["is_new"] = False
+            elif prev_pos is None and prev_snapshot:
+                # This keyword wasn't in the previous snapshot — it's NEW
+                kw["position_change"] = None
+                kw["is_new"] = True
             else:
                 kw["position_change"] = None
+                kw["is_new"] = False
             prev_clicks = prev_clicks_map.get(q)
             if prev_clicks is not None:
                 kw["clicks_change"] = kw.get("clicks", 0) - prev_clicks
             else:
                 kw["clicks_change"] = None
+
+        # Detect LOST keywords (were in previous snapshot but not in current)
+        lost_keywords = []
+        if prev_snapshot and prev_snapshot.keyword_data:
+            for kw in prev_snapshot.keyword_data:
+                q = kw.get("query", "").lower()
+                if q not in current_queries:
+                    lost_keywords.append({
+                        "query": kw.get("query", ""),
+                        "previous_position": kw.get("position", 0),
+                        "previous_clicks": kw.get("clicks", 0),
+                        "previous_impressions": kw.get("impressions", 0),
+                    })
+
+        # Count new keywords
+        new_keywords = [kw for kw in keywords if kw.get("is_new")]
 
         # Summary-level changes
         summary_changes = None
@@ -511,6 +535,10 @@ async def get_latest_snapshot(website_id: int) -> Dict[str, Any]:
                 "gsc_property": snapshot.gsc_property,
                 "keywords": keywords,
                 "changes": summary_changes,
+                "new_keywords_count": len(new_keywords),
+                "lost_keywords_count": len(lost_keywords),
+                "new_keywords": sorted(new_keywords, key=lambda x: x.get("impressions", 0), reverse=True)[:20],
+                "lost_keywords": sorted(lost_keywords, key=lambda x: x.get("previous_clicks", 0), reverse=True)[:20],
             }
         }
     except Exception as e:
