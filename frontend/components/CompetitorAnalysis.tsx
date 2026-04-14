@@ -6,7 +6,8 @@ import { motion } from 'framer-motion';
 import {
   Network, Clock, Loader2, Link2, AlertTriangle, ExternalLink,
   TrendingDown, RefreshCw, Target, Globe, FileText, ArrowRight,
-  ChevronRight, Eye, Zap, Star, Shield, Unlink
+  ChevronRight, Eye, Zap, Star, Shield, Unlink, Users, Search,
+  BarChart3, Trophy
 } from 'lucide-react';
 
 interface LinkNode {
@@ -39,11 +40,14 @@ interface DecayResult {
 }
 
 export default function CompetitorAnalysis({ websiteId }: { websiteId: number }) {
-  const [activeTab, setActiveTab] = useState<'linking' | 'decay'>('linking');
+  const [activeTab, setActiveTab] = useState<'competitors' | 'linking' | 'decay'>('competitors');
   const [linkingData, setLinkingData] = useState<LinkingResult | null>(null);
   const [decayData, setDecayData] = useState<DecayResult | null>(null);
   const [linkingLoading, setLinkingLoading] = useState(false);
   const [decayLoading, setDecayLoading] = useState(false);
+  const [competitorData, setCompetitorData] = useState<any>(null);
+  const [competitorLoading, setCompetitorLoading] = useState(false);
+  const [competitorDomain, setCompetitorDomain] = useState('');
   const [expandedOrphan, setExpandedOrphan] = useState<string | null>(null);
 
   const API = process.env.NEXT_PUBLIC_API_URL || '';
@@ -64,6 +68,20 @@ export default function CompetitorAnalysis({ websiteId }: { websiteId: number })
     } catch {} finally { setDecayLoading(false); }
   };
 
+  const runCompetitorAnalysis = async () => {
+    if (!competitorDomain.trim()) return;
+    setCompetitorLoading(true); setCompetitorData(null);
+    try {
+      const r = await fetch(`${API}/api/competitors/${websiteId}/research`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ competitor_domain: competitorDomain.trim() })
+      });
+      if (r.ok) { const d = await r.json(); setCompetitorData(d); }
+      else { setCompetitorData({ error: 'Analysis failed. Check the domain and try again.' }); }
+    } catch { setCompetitorData({ error: 'Network error' }); }
+    finally { setCompetitorLoading(false); }
+  };
+
   const riskColor = (risk: string) => {
     if (risk === 'high') return 'text-red-400 bg-red-500/20';
     if (risk === 'medium') return 'text-yellow-400 bg-yellow-500/20';
@@ -77,15 +95,16 @@ export default function CompetitorAnalysis({ websiteId }: { websiteId: number })
           <div className="w-9 h-9 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg flex items-center justify-center">
             <Network className="w-5 h-5 text-white" />
           </div>
-          Site Intelligence
+          Competitors & Site Intelligence
         </h2>
-        <p className="text-gray-400 mt-1 text-sm">Internal linking structure and content freshness analysis</p>
+        <p className="text-gray-400 mt-1 text-sm">Competitor research, internal linking, and content freshness</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {[
-          { id: 'linking' as const, label: 'Hub & Spoke Linking', icon: Network },
+          { id: 'competitors' as const, label: 'Competitor Research', icon: Users },
+          { id: 'linking' as const, label: 'Hub & Spoke', icon: Network },
           { id: 'decay' as const, label: 'Content Decay', icon: Clock },
         ].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
@@ -96,6 +115,89 @@ export default function CompetitorAnalysis({ websiteId }: { websiteId: number })
           </button>
         ))}
       </div>
+
+      {/* ═══ COMPETITOR RESEARCH ═══ */}
+      {activeTab === 'competitors' && (
+        <div className="space-y-4">
+          {/* Quick competitor lookup */}
+          <div className="bg-white/5 rounded-xl p-5 border border-white/10">
+            <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+              <Search className="w-5 h-5 text-purple-400" /> Analyze a Competitor
+            </h3>
+            <p className="text-gray-400 text-xs mb-3">Enter a competitor domain to see how they compare on your tracked keywords. This uses the Road to #1 engine to crawl their pages.</p>
+            <div className="flex gap-2">
+              <input type="text" value={competitorDomain} onChange={e => setCompetitorDomain(e.target.value)}
+                placeholder="competitor.com" onKeyDown={e => e.key === 'Enter' && runCompetitorAnalysis()}
+                className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-purple-500" />
+              <button onClick={runCompetitorAnalysis} disabled={competitorLoading || !competitorDomain.trim()}
+                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:shadow-lg transition-all disabled:opacity-50 flex items-center gap-2">
+                {competitorLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                Analyze
+              </button>
+            </div>
+          </div>
+
+          {competitorLoading && (
+            <div className="bg-purple-500/10 rounded-xl p-8 text-center border border-purple-500/20">
+              <Loader2 className="w-10 h-10 text-purple-400 animate-spin mx-auto mb-4" />
+              <p className="text-white font-medium">Analyzing competitor...</p>
+              <p className="text-gray-400 text-sm mt-1">Crawling pages and comparing with your tracked keywords (30-60s)</p>
+            </div>
+          )}
+
+          {competitorData && !competitorData.error && (
+            <div className="space-y-4">
+              {competitorData.competitor_analysis && (
+                <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-5 border border-purple-500/20">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <Trophy className="w-5 h-5 text-yellow-400" /> Analysis: {competitorDomain}
+                  </h3>
+                  <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-line">
+                    {typeof competitorData.competitor_analysis === 'string'
+                      ? competitorData.competitor_analysis
+                      : JSON.stringify(competitorData.competitor_analysis, null, 2)}
+                  </div>
+                </div>
+              )}
+
+              {competitorData.strategy && (
+                <div className="bg-white/5 rounded-xl p-5 border border-white/10">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                    <Target className="w-5 h-5 text-green-400" /> How to Beat Them
+                  </h3>
+                  <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-line">
+                    {typeof competitorData.strategy === 'string'
+                      ? competitorData.strategy
+                      : JSON.stringify(competitorData.strategy, null, 2)}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {competitorData?.error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+              <p className="text-red-400 text-sm">{competitorData.error}</p>
+            </div>
+          )}
+
+          {!competitorData && !competitorLoading && (
+            <div className="bg-white/5 rounded-xl p-6 border border-white/10">
+              <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-blue-400" /> How Competitor Research Works
+              </h3>
+              <div className="space-y-2 text-gray-400 text-sm">
+                <p>The competitor analysis engine:</p>
+                <p className="ml-3">• Crawls the competitor&apos;s top pages and analyzes their content structure</p>
+                <p className="ml-3">• Compares their content against your tracked keywords (Road to #1)</p>
+                <p className="ml-3">• Identifies content gaps — topics they cover that you don&apos;t</p>
+                <p className="ml-3">• Generates specific recommendations to outrank them</p>
+                <p className="mt-2 text-gray-500">For deeper keyword-level competitor analysis, use <strong className="text-purple-400">Road to #1</strong> — it crawls the top 3 competitors for each tracked keyword.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ═══ HUB & SPOKE LINKING ═══ */}
       {activeTab === 'linking' && (
