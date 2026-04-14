@@ -419,20 +419,26 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
                       <ShoppingCart className="w-4 h-4 text-green-400" />
                       Connect Shopify Store
                     </h4>
-                    <p className="text-gray-400 text-xs mb-3">
-                      Go to Shopify Admin → Settings → Apps and sales channels → Develop apps → Create an app → Configure Admin API scopes (read/write products) → Install → Copy the Admin API access token.
-                    </p>
+                    <div className="bg-green-500/10 rounded-lg p-3 mb-3 border border-green-500/20">
+                      <p className="text-green-400 text-xs font-medium mb-1">How to get your access token:</p>
+                      <ol className="text-gray-400 text-xs space-y-0.5 list-decimal list-inside">
+                        <li>Shopify Admin → Settings → Apps → Develop apps</li>
+                        <li>Create an app → Configure Admin API scopes (enable products, content)</li>
+                        <li><strong className="text-white">Click &quot;Install app&quot;</strong> — this is the step that generates the token</li>
+                        <li>Copy the <strong className="text-green-400">Admin API access token</strong> (starts with shpat_) — shown only once!</li>
+                      </ol>
+                    </div>
                     <div className="space-y-2">
                       <input type="text" placeholder="Store URL (e.g. my-store.myshopify.com)" value={shopifyDomain} onChange={e => setShopifyDomain(e.target.value)}
                         className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-green-500" />
                       <input type="password" placeholder="Admin API access token (shpat_...)" value={shopifyToken} onChange={e => setShopifyToken(e.target.value)}
                         className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-green-500" />
                       {shopifyMessage && (
-                        <p className={`text-xs ${shopifyMessage.includes('✓') ? 'text-green-400' : 'text-red-400'}`}>{shopifyMessage}</p>
+                        <p className={`text-xs p-2 rounded-lg ${shopifyMessage.includes('✓') ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'}`}>{shopifyMessage}</p>
                       )}
                       <div className="flex gap-2 mt-2">
                         <button onClick={async () => {
-                          if (!shopifyDomain || !shopifyToken) { setShopifyMessage('Both fields are required'); return; }
+                          if (!shopifyDomain || !shopifyToken) { setShopifyMessage('Store URL and access token are both required'); return; }
                           setShopifyConnecting(true); setShopifyMessage('');
                           try {
                             const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/integrations/${websiteId}/connect`, {
@@ -440,14 +446,14 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
                               body: JSON.stringify({ integration_id: 'shopify', shop_domain: shopifyDomain, access_token: shopifyToken })
                             });
                             const d = await r.json();
-                            if (d.connected) { setShopifyMessage(d.message); fetchIntegrationStatus(); onIntegrationChange?.(); setShopifyFormVisible(false); }
+                            if (d.connected) { setShopifyMessage(d.message); fetchIntegrationStatus(); onIntegrationChange?.(); setTimeout(() => setShopifyFormVisible(false), 1500); }
                             else { setShopifyMessage(d.message || 'Connection failed'); }
-                          } catch { setShopifyMessage('Failed to connect'); }
+                          } catch { setShopifyMessage('Failed to connect — check your network'); }
                           finally { setShopifyConnecting(false); }
                         }} disabled={shopifyConnecting}
                           className="flex-1 bg-green-500/20 text-green-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-500/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
                           {shopifyConnecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
-                          {shopifyConnecting ? 'Connecting...' : 'Connect with Token'}
+                          {shopifyConnecting ? 'Connecting...' : 'Connect'}
                         </button>
                         <button onClick={() => { setShopifyFormVisible(false); setShopifyMessage(''); }}
                           className="bg-white/10 text-gray-400 px-3 py-2 rounded-lg text-sm hover:bg-white/20 transition-all">
