@@ -8,7 +8,7 @@ from datetime import datetime
 import httpx
 from dotenv import load_dotenv
 
-from database import SessionLocal, Website, ContentItem, TrackedKeyword, KeywordSnapshot
+from database import SessionLocal, Website, ContentItem, TrackedKeyword, KeywordSnapshot, AuditReport
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
@@ -197,20 +197,43 @@ async def suggest_content_ideas(website_id: int) -> Dict[str, Any]:
             keywords = [{"query": kw.get("query",""), "position": kw.get("position",0), "impressions": kw.get("impressions",0)} for kw in latest_snap.keyword_data[:30]]
 
         tracked = db.query(TrackedKeyword).filter(TrackedKeyword.website_id == website_id).all()
-        tracked_kws = [tk.keyword for tk in tracked]
+        tracked_kws = []
+        road_to_one_context = []
+        for tk in tracked:
+            tracked_kws.append(tk.keyword)
+            # Include position context for Road to #1 connection
+            if tk.current_position:
+                road_to_one_context.append(f"- '{tk.keyword}' (pos #{tk.current_position}, target URL: {tk.target_url or 'not set'})")
+
+        # Get latest audit issues for content-related problems
+        latest_audit = db.query(AuditReport).filter(
+            AuditReport.website_id == website_id
+        ).order_by(AuditReport.audit_date.desc()).first()
+
+        thin_content_pages = []
+        if latest_audit and latest_audit.detailed_findings:
+            for issue in latest_audit.detailed_findings.get("issues", []):
+                if issue.get("issue_type") in ("thin_content", "missing_content", "low_word_count"):
+                    thin_content_pages.extend(issue.get("affected_pages", [])[:3])
 
         prompt = f"""You are a content strategist for {website.domain}.
 
 Current keywords ranking:
 {json.dumps(keywords[:20], indent=1) if keywords else 'No keyword data yet'}
 
-Priority keywords: {', '.join(tracked_kws) if tracked_kws else 'None set'}
+Priority keywords (Road to #1 campaigns): {', '.join(tracked_kws) if tracked_kws else 'None set'}
+
+{'Road to #1 content gaps identified:' + chr(10) + chr(10).join(road_to_one_context) if road_to_one_context else ''}
+
+{'Pages with thin/missing content that need improvement: ' + ', '.join(thin_content_pages[:5]) if thin_content_pages else ''}
 
 Suggest 10 content ideas that would:
-1. Target keywords the site doesn't rank for yet
-2. Support existing ranking keywords (hub & spoke)
-3. Answer questions customers likely search for
-4. Fill content gaps vs competitors
+1. PRIORITIZE content that Road to #1 campaigns have identified as needed
+2. Target keywords the site doesn't rank for yet
+3. Support existing ranking keywords (hub & spoke — create supporting content that links to priority pages)
+4. Answer questions customers likely search for
+5. Fill content gaps vs competitors
+6. Expand thin content pages identified in audits
 
 Return JSON:
 [
@@ -221,7 +244,8 @@ Return JSON:
     "estimated_volume": "low/medium/high",
     "difficulty": "easy/medium/hard",
     "why": "brief reason this content would help rankings",
-    "supports_keywords": ["existing keywords this would boost"]
+    "supports_keywords": ["existing keywords this would boost"],
+    "road_to_one_connection": "which Road to #1 keyword this supports, if any"
   }}
 ]"""
 
