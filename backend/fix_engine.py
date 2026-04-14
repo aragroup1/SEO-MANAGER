@@ -723,16 +723,17 @@ class WordPressFixEngine:
         if not self.wp_url.startswith('https://'):
             self.wp_url = f"https://{self.wp_url}"
         self.api_base = f"{self.wp_url}/wp-json/wp/v2"
-        self.auth = (username, app_password) if username and app_password else None
+        # Use explicit Authorization header — more reliable than auth tuple
+        import base64
+        app_password = app_password.replace(" ", "")  # Strip spaces WordPress adds
+        auth_string = base64.b64encode(f"{username}:{app_password}".encode()).decode()
+        self.headers = {"Authorization": f"Basic {auth_string}"} if username and app_password else {}
         self.ai = AIFixGenerator()
 
     async def _api_get(self, endpoint: str, params: Dict = None) -> Optional[Any]:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                kwargs = {"params": params}
-                if self.auth:
-                    kwargs["auth"] = self.auth
-                resp = await client.get(f"{self.api_base}/{endpoint}", **kwargs)
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.get(f"{self.api_base}/{endpoint}", params=params, headers=self.headers)
                 if resp.status_code == 200:
                     return resp.json()
                 print(f"[WP API] GET {endpoint} failed: {resp.status_code}")
@@ -857,11 +858,8 @@ class WordPressFixEngine:
 
     async def _api_put(self, endpoint: str, data: Dict) -> Optional[Any]:
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                kwargs = {"json": data}
-                if self.auth:
-                    kwargs["auth"] = self.auth
-                resp = await client.post(f"{self.api_base}/{endpoint}", **kwargs)
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.post(f"{self.api_base}/{endpoint}", json=data, headers=self.headers)
                 if resp.status_code in [200, 201]:
                     return resp.json()
                 print(f"[WP API] PUT {endpoint} failed: {resp.status_code} {resp.text[:200]}")
