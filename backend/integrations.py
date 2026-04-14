@@ -192,13 +192,44 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
         print(f"[Shopify] Connect attempt: shop_domain='{shop_domain}', has_direct_token={bool(direct_token)}, has_client_id={bool(shopify_client_id)}")
 
         if direct_token:
-            # Direct connection with Admin API key — works for any store
+            # Direct connection with Admin API access token or API key+secret
             if not shop_domain:
-                return {"connected": False, "message": "Shop domain is required with direct access token."}
+                return {"connected": False, "message": "Shop domain is required."}
 
             shop_domain = shop_domain.replace("https://", "").replace("http://", "").rstrip("/")
             if not shop_domain.endswith(".myshopify.com"):
                 shop_domain = shop_domain + ".myshopify.com"
+
+            # Determine auth method based on token format
+            api_key = data.get("api_key", "").strip()
+
+            if direct_token.startswith("shpss_") and api_key:
+                # API key + secret method (for custom apps before install)
+                print(f"[Shopify] Using API key + secret auth for {shop_domain}")
+                auth_headers = {
+                    "Content-Type": "application/json",
+                }
+                # Use HTTP Basic auth with API key as user and secret as password
+                import base64 as b64
+                basic_auth = b64.b64encode(f"{api_key}:{direct_token}".encode()).decode()
+                auth_headers["Authorization"] = f"Basic {basic_auth}"
+                auth_method = "api_key_secret"
+                effective_token = direct_token  # store the secret
+            elif direct_token.startswith("shpss_") and not api_key:
+                # User pasted the secret key but no API key
+                return {
+                    "connected": False,
+                    "message": "That's the API Secret Key (shpss_), not the Admin API access token. "
+                               "Go to your app in Shopify → API credentials → click 'Install app' button → "
+                               "the Admin API access token (shpat_...) will appear. Copy it IMMEDIATELY — "
+                               "it's only shown once. If you already installed, you'll need to uninstall and reinstall, "
+                               "or create a new custom app."
+                }
+            else:
+                # Standard shpat_ token or any other token
+                auth_headers = {"X-Shopify-Access-Token": direct_token}
+                auth_method = "access_token"
+                effective_token = direct_token
 
             # Verify the token works
             try:
@@ -206,12 +237,14 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
                 async with httpx_lib.AsyncClient(timeout=15) as tc:
                     test_r = await tc.get(
                         f"https://{shop_domain}/admin/api/2024-01/shop.json",
-                        headers={"X-Shopify-Access-Token": direct_token}
+                        headers=auth_headers
                     )
                     if test_r.status_code == 200:
                         shop_name = test_r.json().get("shop", {}).get("name", shop_domain)
                     elif test_r.status_code == 401:
-                        return {"connected": False, "message": "Invalid access token. Go to Shopify Admin → Settings → Apps → Develop apps → Create/select app → API credentials → Admin API access token."}
+                        return {"connected": False, "message": "Invalid token/credentials (401). Make sure you've installed the app and copied the Admin API access token (shpat_...)."}
+                    elif test_r.status_code == 403:
+                        return {"connected": False, "message": "Access denied (403). The app may not have the required API scopes. Edit the app → Admin API access scopes → enable read_products, write_products, read_content, write_content → Save → Reinstall."}
                     else:
                         return {"connected": False, "message": f"Shopify returned {test_r.status_code}. Check the store URL and token."}
             except Exception as e:
@@ -221,29 +254,34 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
             website = db.query(Website).filter(Website.id == website_id).first()
             if website:
                 website.shopify_store_url = shop_domain
-                website.shopify_access_token = direct_token
+                website.shopify_access_token = effective_token
+                if auth_method == "api_key_secret":
+                    # Store API key in config for future auth
+                    pass
 
             existing = db.query(Integration).filter(
                 Integration.website_id == website_id,
                 Integration.integration_type == "shopify"
             ).first()
+            config_data = {"store_url": shop_domain, "shop_domain": shop_domain, "auth_method": auth_method}
+            if api_key:
+                config_data["api_key"] = api_key
+
             if existing:
                 existing.status = "active"
-                existing.access_token = direct_token
+                existing.access_token = effective_token
                 existing.connected_at = datetime.utcnow()
                 existing.account_name = shop_name
-                existing.config = {"store_url": shop_domain, "shop_domain": shop_domain, "auth_method": "direct_token"}
+                existing.config = config_data
             else:
                 new_integration = Integration(
                     website_id=website_id, integration_type="shopify", status="active",
-                    access_token=direct_token, connected_at=datetime.utcnow(),
-                    account_name=shop_name,
-                    config={"store_url": shop_domain, "shop_domain": shop_domain, "auth_method": "direct_token"},
-                    scopes=[]
+                    access_token=effective_token, connected_at=datetime.utcnow(),
+                    account_name=shop_name, config=config_data, scopes=[]
                 )
                 db.add(new_integration)
             db.commit()
-            return {"connected": True, "message": f"Shopify connected: {shop_name} (direct token ✓)"}
+            return {"connected": True, "message": f"Shopify connected: {shop_name} ✓"}
 
         if not shop_domain:
             website = db.query(Website).filter(Website.id == website_id).first()
