@@ -995,6 +995,50 @@ class WordPressFixEngine:
 
 
 # ─────────────────────────────────────────
+#  Shopify token refresh (client_credentials tokens expire in 24h)
+# ─────────────────────────────────────────
+
+async def _refresh_shopify_token(db, integration) -> str:
+    """Refresh a Shopify access token using client_credentials grant."""
+    config = integration.config or {}
+    client_id = config.get("client_id", "")
+    client_secret = config.get("client_secret", "")
+    shop_domain = config.get("shop_domain", "")
+
+    if not client_id or not client_secret or not shop_domain:
+        return integration.access_token or ""
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"https://{shop_domain}/admin/oauth/access_token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            if resp.status_code == 200:
+                token_data = resp.json()
+                new_token = token_data.get("access_token", "")
+                if new_token:
+                    integration.access_token = new_token
+                    config["token_obtained_at"] = datetime.utcnow().isoformat()
+                    config["token_expires_in"] = token_data.get("expires_in", 86399)
+                    integration.config = config
+                    db.commit()
+                    print(f"[Shopify] Token refreshed for {shop_domain}")
+                    return new_token
+            else:
+                print(f"[Shopify] Token refresh failed: {resp.status_code} {resp.text[:200]}")
+    except Exception as e:
+        print(f"[Shopify] Token refresh error: {e}")
+
+    return integration.access_token or ""
+
+
+# ─────────────────────────────────────────
 #  Main orchestrator
 # ─────────────────────────────────────────
 
@@ -1022,6 +1066,10 @@ async def generate_fixes_for_website(website_id: int) -> Dict[str, Any]:
                     access_token = integration.access_token
                     config = integration.config or {}
                     store_url = config.get("store_url", store_url)
+
+                    # Auto-refresh token if using client_credentials flow (token expires in 24h)
+                    if config.get("auth_method") == "client_credentials" and config.get("client_id") and config.get("client_secret"):
+                        access_token = await _refresh_shopify_token(db, integration)
 
             if not access_token:
                 return {"error": "Shopify access token not configured. Connect Shopify via the integration checklist."}
@@ -1110,6 +1158,10 @@ async def apply_approved_fix(fix_id: int) -> Dict[str, Any]:
                     access_token = integration.access_token
                     config = integration.config or {}
                     store_url = config.get("store_url", store_url)
+
+                    # Auto-refresh token if using client_credentials flow
+                    if config.get("auth_method") == "client_credentials" and config.get("client_id"):
+                        access_token = await _refresh_shopify_token(db, integration)
 
             if not access_token:
                 fix.status = "failed"
