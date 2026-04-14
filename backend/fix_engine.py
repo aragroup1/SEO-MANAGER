@@ -962,24 +962,81 @@ class WordPressFixEngine:
     async def _apply_wp_alt_text(self, fix: ProposedFix) -> Tuple[bool, str]:
         resource_id = fix.resource_id
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
-        data = await self._api_get(endpoint)
-        if not data:
-            return False, "Could not fetch " + fix.resource_type
+
+        # Try to get raw content via XML-RPC first (more reliable when REST auth is stripped)
+        content = None
+        try:
+            content = await self._xmlrpc_get_content(resource_id)
+        except:
+            pass
+
+        if not content:
+            # Fall back to REST API rendered content
+            data = await self._api_get(endpoint)
+            if not data:
+                return False, "Could not fetch " + fix.resource_type
+            content = data.get("content", {}).get("raw", data.get("content", {}).get("rendered", ""))
+
+        if not content:
+            return False, "No content found in " + fix.resource_type
+
         from bs4 import BeautifulSoup
-        content = data.get("content", {}).get("raw", data.get("content", {}).get("rendered", ""))
         soup = BeautifulSoup(content, 'html.parser')
+        updated = False
         for img in soup.find_all('img'):
             if not img.get('alt', '').strip():
                 img['alt'] = fix.proposed_value
+                updated = True
                 break
+
+        if not updated:
+            return False, "No image without alt text found"
+
         result = await self._api_put(endpoint, {"content": str(soup)})
         if result:
             return True, "Alt text updated in WordPress"
         return False, "WordPress API rejected the update"
 
+    async def _xmlrpc_get_content(self, post_id: str) -> Optional[str]:
+        """Get post content via XML-RPC (works when REST API auth is blocked)."""
+        try:
+            import base64
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Basic "):
+                return None
+            decoded = base64.b64decode(auth_header.split(" ")[1]).decode()
+            username, password = decoded.split(":", 1)
+
+            xml_payload = f"""<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.getPost</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>{username}</string></value></param>
+    <param><value><string>{password}</string></value></param>
+    <param><value><int>{post_id}</int></value></param>
+  </params>
+</methodCall>"""
+
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.post(f"{self.wp_url}/xmlrpc.php", content=xml_payload.encode(),
+                    headers={"Content-Type": "text/xml; charset=utf-8"})
+                if resp.status_code == 200 and "post_content" in resp.text:
+                    import re
+                    match = re.search(r"<name>post_content</name>\s*<value><string>(.*?)</string></value>", resp.text, re.DOTALL)
+                    if match:
+                        content = match.group(1)
+                        # Unescape XML entities
+                        content = content.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+                        return content
+        except Exception as e:
+            print(f"[WP XML-RPC] getPost error: {e}")
+        return None
+
     async def _apply_wp_excerpt(self, fix: ProposedFix) -> Tuple[bool, str]:
         resource_id = fix.resource_id
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+        print(f"[WP Fix] Applying excerpt fix to {endpoint}")
         result = await self._api_put(endpoint, {"excerpt": fix.proposed_value})
         if result:
             return True, "Excerpt/meta description updated"
@@ -988,6 +1045,7 @@ class WordPressFixEngine:
     async def _apply_wp_content(self, fix: ProposedFix) -> Tuple[bool, str]:
         resource_id = fix.resource_id
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+        print(f"[WP Fix] Applying content fix to {endpoint}")
         result = await self._api_put(endpoint, {"content": fix.proposed_value})
         if result:
             return True, "Content updated in WordPress"
@@ -1052,24 +1110,31 @@ async def generate_fixes_for_website(website_id: int) -> Dict[str, Any]:
         batch_id = "batch_" + str(website_id) + "_" + datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         all_fixes = []
 
-        if website.site_type == "shopify":
+        # Determine which platform to use — check integrations first, then site_type
+        shopify_integration = db.query(Integration).filter(
+            Integration.website_id == website_id,
+            Integration.integration_type == "shopify",
+            Integration.status == "active"
+        ).first()
+
+        wordpress_integration = db.query(Integration).filter(
+            Integration.website_id == website_id,
+            Integration.integration_type == "wordpress",
+            Integration.status == "active"
+        ).first()
+
+        if website.site_type == "shopify" or shopify_integration:
             store_url = website.shopify_store_url or website.domain
             access_token = website.shopify_access_token
 
-            if not access_token:
-                integration = db.query(Integration).filter(
-                    Integration.website_id == website_id,
-                    Integration.integration_type == "shopify",
-                    Integration.status == "active"
-                ).first()
-                if integration:
-                    access_token = integration.access_token
-                    config = integration.config or {}
-                    store_url = config.get("store_url", store_url)
+            if shopify_integration:
+                access_token = shopify_integration.access_token or access_token
+                config = shopify_integration.config or {}
+                store_url = config.get("store_url", store_url)
 
-                    # Auto-refresh token if using client_credentials flow (token expires in 24h)
-                    if config.get("auth_method") == "client_credentials" and config.get("client_id") and config.get("client_secret"):
-                        access_token = await _refresh_shopify_token(db, integration)
+                # Auto-refresh token if using client_credentials flow (token expires in 24h)
+                if config.get("auth_method") == "client_credentials" and config.get("client_id") and config.get("client_secret"):
+                    access_token = await _refresh_shopify_token(db, shopify_integration)
 
             if not access_token:
                 return {"error": "Shopify access token not configured. Connect Shopify via the integration checklist."}
@@ -1077,20 +1142,14 @@ async def generate_fixes_for_website(website_id: int) -> Dict[str, Any]:
             engine = ShopifyFixEngine(store_url, access_token)
             all_fixes = await engine.scan_and_generate_fixes(website_id, batch_id)
 
-        elif website.site_type == "wordpress":
-            integration = db.query(Integration).filter(
-                Integration.website_id == website_id,
-                Integration.integration_type == "wordpress",
-                Integration.status == "active"
-            ).first()
-
+        elif website.site_type == "wordpress" or wordpress_integration:
             wp_url = website.domain
             username = ""
             app_password = ""
 
-            if integration:
-                app_password = integration.access_token or ""
-                config = integration.config or {}
+            if wordpress_integration:
+                app_password = wordpress_integration.access_token or ""
+                config = wordpress_integration.config or {}
                 username = config.get("username", "")
                 wp_url = config.get("wp_url", wp_url)
 
@@ -1098,7 +1157,7 @@ async def generate_fixes_for_website(website_id: int) -> Dict[str, Any]:
             all_fixes = await engine.scan_and_generate_fixes(website_id, batch_id)
 
         else:
-            return {"error": "Auto-fix is supported for Shopify and WordPress sites. Custom sites can use audit recommendations for manual fixes."}
+            return {"error": "No Shopify or WordPress integration connected. Connect one via the integration checklist to enable auto-fixes."}
 
         # Save fixes to database
         saved_count = 0
