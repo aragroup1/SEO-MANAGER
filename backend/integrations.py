@@ -189,6 +189,8 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
         direct_token = data.get("access_token", "").strip()
         shop_domain = data.get("shop_domain", "")
 
+        print(f"[Shopify] Connect attempt: shop_domain='{shop_domain}', has_direct_token={bool(direct_token)}, has_client_id={bool(shopify_client_id)}")
+
         if direct_token:
             # Direct connection with Admin API key — works for any store
             if not shop_domain:
