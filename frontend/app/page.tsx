@@ -193,7 +193,7 @@ export default function Dashboard() {
     { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
     { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
     { id: 'content', label: 'Content Writer', icon: Calendar },
-    { id: 'competitors', label: 'Site Intelligence', icon: Users },
+    { id: 'competitors', label: 'Competitors', icon: Users },
     { id: 'divider3', label: '', icon: null },
     { id: 'reports', label: 'Reports', icon: FileText },
   ];
