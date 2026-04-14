@@ -8,7 +8,7 @@ import {
   TrendingDown, Minus, Target, Shield, Gauge, Globe,
   Search, Sparkles, CheckCircle, XCircle, AlertTriangle,
   Clock, Star, BarChart3, Eye, MousePointerClick, Activity,
-  ArrowUp, ArrowDown, ArrowRight, Calendar, Zap
+  ArrowUp, ArrowDown, ArrowRight, ChevronRight, Calendar, Zap
 } from 'lucide-react';
 
 interface ReportData {
@@ -55,18 +55,18 @@ function Chart({ data, xKey, yKey, color = '#a855f7', label = '', height = 140, 
           return (
             <g key={pct}>
               <line x1={pad} y1={y} x2={w-pad} y2={y} stroke="rgba(255,255,255,0.05)" />
-              <text x={pad-5} y={y+3} fill="#555" fontSize="9" textAnchor="end">{Math.round(val)}</text>
+              <text x={pad-5} y={y+3} fill="#bbb" fontSize="9" textAnchor="end">{Math.round(val)}</text>
             </g>
           );
         })}
 
         {/* X labels */}
         {data.length <= 15 ? data.map((d, i) => (
-          <text key={i} x={points[i].x} y={h-5} fill="#555" fontSize="8" textAnchor="middle">
+          <text key={i} x={points[i].x} y={h-5} fill="#bbb" fontSize="8" textAnchor="middle">
             {String(d[xKey]).slice(-5)}
           </text>
         )) : [0, Math.floor(data.length/2), data.length-1].map(i => (
-          <text key={i} x={points[i].x} y={h-5} fill="#555" fontSize="8" textAnchor="middle">
+          <text key={i} x={points[i].x} y={h-5} fill="#bbb" fontSize="8" textAnchor="middle">
             {String(data[i][xKey]).slice(-5)}
           </text>
         ))}
@@ -136,7 +136,7 @@ function PositionChart({ data, xKey, yKey, height = 140 }: { data: any[]; xKey: 
           return (
             <g key={pct}>
               <line x1={pad} y1={y} x2={w-pad} y2={y} stroke="rgba(255,255,255,0.05)" />
-              <text x={pad-5} y={y+3} fill="#555" fontSize="9" textAnchor="end">#{Math.round(val)}</text>
+              <text x={pad-5} y={y+3} fill="#bbb" fontSize="9" textAnchor="end">#{Math.round(val)}</text>
             </g>
           );
         })}
@@ -177,6 +177,9 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState('');
+  const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
+  const [keywordTrend, setKeywordTrend] = useState<any[] | null>(null);
+  const [trendLoading, setTrendLoading] = useState(false);
 
   const API = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -212,6 +215,16 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
         a.click(); window.URL.revokeObjectURL(url);
       }
     } catch {} finally { setDownloading(false); }
+  };
+
+  const fetchKeywordTrend = async (keyword: string) => {
+    if (selectedKeyword === keyword) { setSelectedKeyword(null); setKeywordTrend(null); return; }
+    setSelectedKeyword(keyword);
+    setTrendLoading(true); setKeywordTrend(null);
+    try {
+      const r = await fetch(`${API}/api/keywords/${websiteId}/keyword-history?keyword=${encodeURIComponent(keyword)}&days=90`);
+      if (r.ok) { const d = await r.json(); setKeywordTrend(d.history || d.data || []); }
+    } catch {} finally { setTrendLoading(false); }
   };
 
   const sc = (s: number) => s >= 70 ? 'text-green-400' : s >= 40 ? 'text-yellow-400' : 'text-red-400';
@@ -362,21 +375,72 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
             ))}
           </div>
 
-          {/* Top keywords table */}
+          {/* Top keywords table — click to see trend */}
           {kw.top_keywords?.length > 0 && (
             <div className="bg-white/5 rounded-lg overflow-hidden">
               <div className="grid grid-cols-12 px-3 py-2 text-xs text-gray-500 border-b border-white/10">
-                <div className="col-span-5">Keyword</div><div className="col-span-2 text-right">Position</div>
-                <div className="col-span-2 text-right">Clicks</div><div className="col-span-3 text-right">Impressions</div>
+                <div className="col-span-4">Keyword</div><div className="col-span-2 text-right">Position</div>
+                <div className="col-span-2 text-right">Change</div>
+                <div className="col-span-2 text-right">Clicks</div><div className="col-span-2 text-right">Impressions</div>
               </div>
-              {kw.top_keywords.slice(0,10).map((k: any, i: number) => (
-                <div key={i} className="grid grid-cols-12 px-3 py-1.5 text-sm border-b border-white/5">
-                  <div className="col-span-5 text-white truncate">{k.query}</div>
-                  <div className={`col-span-2 text-right font-bold ${sc(100-k.position*5)}`}>{k.position}</div>
-                  <div className="col-span-2 text-right text-blue-400">{k.clicks}</div>
-                  <div className="col-span-3 text-right text-gray-400">{k.impressions?.toLocaleString()}</div>
-                </div>
-              ))}
+              {kw.top_keywords.slice(0, 20).map((k: any, i: number) => {
+                const change = k.position_change || k.change || 0;
+                const isSelected = selectedKeyword === k.query;
+                return (
+                  <div key={i}>
+                    <div onClick={() => fetchKeywordTrend(k.query)}
+                      className={`grid grid-cols-12 px-3 py-2 text-sm border-b border-white/5 cursor-pointer hover:bg-white/5 transition-all ${isSelected ? 'bg-purple-500/10 border-l-2 border-l-purple-500' : ''}`}>
+                      <div className="col-span-4 text-white truncate flex items-center gap-1">
+                        <ChevronRight className={`w-3 h-3 text-gray-500 transition-transform shrink-0 ${isSelected ? 'rotate-90' : ''}`} />
+                        {k.query}
+                      </div>
+                      <div className={`col-span-2 text-right font-bold ${k.position <= 3 ? 'text-green-400' : k.position <= 10 ? 'text-yellow-400' : k.position <= 20 ? 'text-orange-400' : 'text-red-400'}`}>
+                        #{k.position}
+                      </div>
+                      <div className="col-span-2 text-right">
+                        {change !== 0 ? (
+                          <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${change > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {change > 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                            {Math.abs(change)}
+                          </span>
+                        ) : <span className="text-gray-600 text-xs">—</span>}
+                      </div>
+                      <div className="col-span-2 text-right text-blue-400">{k.clicks}</div>
+                      <div className="col-span-2 text-right text-gray-400">{k.impressions?.toLocaleString()}</div>
+                    </div>
+                    {/* Expanded trend chart */}
+                    {isSelected && (
+                      <div className="px-4 py-3 bg-purple-500/5 border-b border-white/10">
+                        {trendLoading ? (
+                          <div className="flex items-center justify-center py-4">
+                            <Loader2 className="w-4 h-4 text-purple-400 animate-spin mr-2" />
+                            <span className="text-gray-400 text-xs">Loading trend...</span>
+                          </div>
+                        ) : keywordTrend && keywordTrend.length > 1 ? (
+                          <div className="space-y-2">
+                            <p className="text-purple-400 text-xs font-medium">Position trend for "{k.query}" (last 90 days)</p>
+                            <PositionChart data={keywordTrend} xKey="date" yKey="position" height={120} />
+                            <div className="grid grid-cols-3 gap-2 mt-2">
+                              {[
+                                { l: 'Best Position', v: Math.min(...keywordTrend.filter((t: any) => t.position > 0).map((t: any) => t.position)), c: 'text-green-400' },
+                                { l: 'Avg Clicks/Day', v: (keywordTrend.reduce((s: number, t: any) => s + (t.clicks || 0), 0) / keywordTrend.length).toFixed(1), c: 'text-blue-400' },
+                                { l: 'Total Impressions', v: keywordTrend.reduce((s: number, t: any) => s + (t.impressions || 0), 0).toLocaleString(), c: 'text-gray-300' },
+                              ].map(m => (
+                                <div key={m.l} className="text-center bg-white/5 rounded p-2">
+                                  <p className={`text-sm font-bold ${m.c}`}>{m.v}</p>
+                                  <p className="text-[10px] text-gray-500">{m.l}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-gray-500 text-xs text-center py-2">No trend data available for this keyword</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
