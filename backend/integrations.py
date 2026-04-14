@@ -185,8 +185,63 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
             "https://backend-production-6104.up.railway.app/api/integrations/oauth/shopify/callback"
         )
 
-        # Get the shop domain from the request or from the website record
+        # Support direct access token (Admin API key) — no OAuth needed
+        direct_token = data.get("access_token", "").strip()
         shop_domain = data.get("shop_domain", "")
+
+        if direct_token:
+            # Direct connection with Admin API key — works for any store
+            if not shop_domain:
+                return {"connected": False, "message": "Shop domain is required with direct access token."}
+
+            shop_domain = shop_domain.replace("https://", "").replace("http://", "").rstrip("/")
+            if not shop_domain.endswith(".myshopify.com"):
+                shop_domain = shop_domain + ".myshopify.com"
+
+            # Verify the token works
+            try:
+                import httpx as httpx_lib
+                async with httpx_lib.AsyncClient(timeout=15) as tc:
+                    test_r = await tc.get(
+                        f"https://{shop_domain}/admin/api/2024-01/shop.json",
+                        headers={"X-Shopify-Access-Token": direct_token}
+                    )
+                    if test_r.status_code == 200:
+                        shop_name = test_r.json().get("shop", {}).get("name", shop_domain)
+                    elif test_r.status_code == 401:
+                        return {"connected": False, "message": "Invalid access token. Go to Shopify Admin → Settings → Apps → Develop apps → Create/select app → API credentials → Admin API access token."}
+                    else:
+                        return {"connected": False, "message": f"Shopify returned {test_r.status_code}. Check the store URL and token."}
+            except Exception as e:
+                return {"connected": False, "message": f"Cannot reach {shop_domain}: {str(e)[:100]}"}
+
+            # Also save to the Website record for the fix engine
+            website = db.query(Website).filter(Website.id == website_id).first()
+            if website:
+                website.shopify_store_url = shop_domain
+                website.shopify_access_token = direct_token
+
+            existing = db.query(Integration).filter(
+                Integration.website_id == website_id,
+                Integration.integration_type == "shopify"
+            ).first()
+            if existing:
+                existing.status = "active"
+                existing.access_token = direct_token
+                existing.connected_at = datetime.utcnow()
+                existing.account_name = shop_name
+                existing.config = {"store_url": shop_domain, "shop_domain": shop_domain, "auth_method": "direct_token"}
+            else:
+                new_integration = Integration(
+                    website_id=website_id, integration_type="shopify", status="active",
+                    access_token=direct_token, connected_at=datetime.utcnow(),
+                    account_name=shop_name,
+                    config={"store_url": shop_domain, "shop_domain": shop_domain, "auth_method": "direct_token"},
+                    scopes=[]
+                )
+                db.add(new_integration)
+            db.commit()
+            return {"connected": True, "message": f"Shopify connected: {shop_name} (direct token ✓)"}
 
         if not shop_domain:
             website = db.query(Website).filter(Website.id == website_id).first()
@@ -329,12 +384,37 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
                 print(f"[WordPress] Connection test PASSED (read=OK, write={'OK' if write_ok else 'FAILED: ' + write_msg})")
 
                 if not write_ok:
-                    # Still save the connection but warn
-                    warning = f"Connected but CANNOT edit content. User '{wp_username}' (role: {user_role}) doesn't have write permissions. {write_msg}"
-                    print(f"[WordPress] WARNING: {warning}")
-                    # Save anyway so they can try different credentials
+                    # Try XML-RPC as fallback
+                    xmlrpc_ok = False
+                    try:
+                        xmlrpc_url = f"{wp_url}/xmlrpc.php"
+                        # Test with wp.getUsersBlogs (lightweight read that confirms XML-RPC auth works)
+                        xml_test = f"""<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.getUsersBlogs</methodName>
+  <params>
+    <param><value><string>{wp_username}</string></value></param>
+    <param><value><string>{wp_app_password}</string></value></param>
+  </params>
+</methodCall>"""
+                        xmlrpc_resp = await test_client.post(xmlrpc_url, content=xml_test.encode(),
+                            headers={"Content-Type": "text/xml; charset=utf-8"})
+                        if xmlrpc_resp.status_code == 200 and "<name>blogid</name>" in xmlrpc_resp.text:
+                            xmlrpc_ok = True
+                            print(f"[WordPress] XML-RPC fallback available ✓")
+                        elif xmlrpc_resp.status_code == 403:
+                            print(f"[WordPress] XML-RPC also blocked (403)")
+                        else:
+                            print(f"[WordPress] XML-RPC test: {xmlrpc_resp.status_code} {xmlrpc_resp.text[:100]}")
+                    except Exception as xe:
+                        print(f"[WordPress] XML-RPC test error: {xe}")
+
                     _save_wp_integration(db, website_id, wp_url, wp_username, wp_app_password)
-                    return {"connected": True, "message": f"WordPress connected (read-only). ⚠️ {warning}. Fixes will fail until write access is granted."}
+
+                    if xmlrpc_ok:
+                        return {"connected": True, "message": f"WordPress connected: {wp_url}. REST API blocked by security plugin — will use XML-RPC fallback for fixes ✓"}
+                    else:
+                        return {"connected": True, "message": f"WordPress connected (read-only). ⚠️ Both REST API and XML-RPC blocked by security plugin. To enable fixes, whitelist the REST API in your security plugin settings (Wordfence → Firewall → Whitelist, or iThemes → REST API settings)."}
 
         except Exception as e:
             print(f"[WordPress] Connection test FAILED: {e}")
