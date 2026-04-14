@@ -8,7 +8,7 @@ import {
   CheckCircle, XCircle, AlertCircle, Settings, Link2,
   BarChart3, Calendar, Users, FileSearch, FileText, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity, Trophy,
-  ChevronDown, Menu, X, MessageSquare
+  ChevronDown, Menu, X, MessageSquare, Lock, LogOut
 } from 'lucide-react';
 import ApprovalQueue from '@/components/ApprovalQueue';
 import ErrorMonitor from '@/components/ErrorMonitor';
@@ -32,6 +32,16 @@ interface Website {
 }
 
 export default function Dashboard() {
+  // ─── Auth State ───
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authRequired, setAuthRequired] = useState(true);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // ─── App State ───
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedWebsite, setSelectedWebsite] = useState<number | null>(null);
   const [websites, setWebsites] = useState<Website[]>([]);
@@ -41,9 +51,96 @@ export default function Dashboard() {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
+  // ─── Auth helpers ───
+  const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('seo_token') || '' : '';
+
+  const checkAuth = useCallback(async () => {
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_URL}/api/auth/check`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (r.ok) {
+        const d = await r.json();
+        setAuthRequired(d.auth_required);
+        setAuthenticated(d.authenticated || !d.auth_required);
+      }
+    } catch {
+      // Backend down — skip auth
+      setAuthenticated(true);
+      setAuthRequired(false);
+    } finally { setAuthChecking(false); }
+  }, [API_URL]);
+
+  useEffect(() => { checkAuth(); }, [checkAuth]);
+
+  const handleLogin = async () => {
+    setLoginLoading(true); setLoginError('');
+    try {
+      const r = await fetch(`${API_URL}/api/auth/login`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername, password: loginPassword })
+      });
+      const d = await r.json();
+      if (d.success && d.token) {
+        localStorage.setItem('seo_token', d.token);
+        setAuthenticated(true);
+      } else {
+        setLoginError(d.message || 'Invalid credentials');
+      }
+    } catch { setLoginError('Cannot reach server'); }
+    finally { setLoginLoading(false); }
+  };
+
+  const handleLogout = () => {
+    const token = getToken();
+    if (token) {
+      fetch(`${API_URL}/api/auth/logout`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${token}` }
+      }).catch(() => {});
+    }
+    localStorage.removeItem('seo_token');
+    setAuthenticated(false);
+  };
+
+  // Expose token globally so components can use it
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__seoToken = getToken;
+
+      // Intercept all fetch calls to add auth header
+      const originalFetch = window.fetch;
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        // Only add token to our API calls
+        if (url.includes('/api/') || url.includes('/websites')) {
+          const token = getToken();
+          if (token) {
+            init = init || {};
+            init.headers = {
+              ...init.headers,
+              'Authorization': `Bearer ${token}`,
+            };
+          }
+        }
+        const response = await originalFetch(input, init);
+        // If we get 401, redirect to login
+        if (response.status === 401 && !url.includes('/auth/')) {
+          localStorage.removeItem('seo_token');
+          setAuthenticated(false);
+        }
+        return response;
+      };
+
+      return () => { window.fetch = originalFetch; };
+    }
+  }, [authenticated]);
+
   const fetchWebsites = useCallback(async () => {
     try {
-      const response = await fetch(`${API_URL}/websites`);
+      const response = await fetch(`${API_URL}/websites`, {
+        headers: { 'Authorization': `Bearer ${getToken()}` }
+      });
       if (response.ok) {
         const data = await response.json();
         const list = Array.isArray(data) ? data : [];
@@ -60,8 +157,8 @@ export default function Dashboard() {
     }
   }, [API_URL, selectedWebsite]);
 
-  useEffect(() => { fetchWebsites(); }, []);
-  useEffect(() => { if (activeTab === 'websites') fetchWebsites(); }, [activeTab]);
+  useEffect(() => { if (authenticated) fetchWebsites(); }, [authenticated]);
+  useEffect(() => { if (activeTab === 'websites' && authenticated) fetchWebsites(); }, [activeTab]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -96,10 +193,79 @@ export default function Dashboard() {
     { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
     { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
     { id: 'content', label: 'Content Writer', icon: Calendar },
-    { id: 'competitors', label: 'Competitors', icon: Users },
+    { id: 'competitors', label: 'Site Intelligence', icon: Users },
     { id: 'divider3', label: '', icon: null },
     { id: 'reports', label: 'Reports', icon: FileText },
   ];
+
+  // ─── Auth Loading ───
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <Shield className="w-6 h-6 text-white" />
+          </div>
+          <p className="text-gray-400 text-sm">Checking authentication...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Login Screen ───
+  if (authRequired && !authenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center">
+        <div className="fixed inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob"></div>
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000"></div>
+        </div>
+        <div className="relative z-10 w-full max-w-sm mx-4">
+          <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-8 border border-white/10 shadow-2xl">
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl flex items-center justify-center mx-auto mb-4">
+                <Lock className="w-7 h-7 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold text-white">SEO Intelligence</h1>
+              <p className="text-gray-400 text-sm mt-1">Sign in to access your dashboard</p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-gray-400 text-xs mb-1.5">Username</label>
+                <input type="text" value={loginUsername} onChange={e => setLoginUsername(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                  placeholder="Username" autoFocus
+                  className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-gray-400 text-xs mb-1.5">Password</label>
+                <input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                  placeholder="Password"
+                  className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm" />
+              </div>
+
+              {loginError && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                  <p className="text-red-400 text-xs">{loginError}</p>
+                </div>
+              )}
+
+              <button onClick={handleLogin} disabled={loginLoading || !loginUsername || !loginPassword}
+                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-lg font-medium hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                {loginLoading ? (
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <>Sign In</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
@@ -246,6 +412,16 @@ export default function Dashboard() {
                 </div>
                 <p className="text-[10px] text-gray-500 truncate">{aiStatus.message}</p>
               </div>
+            </div>
+          )}
+
+          {/* Logout */}
+          {authRequired && (
+            <div className="p-3 border-t border-white/10">
+              <button onClick={handleLogout} className="w-full flex items-center gap-2 text-gray-500 hover:text-red-400 transition-all px-2 py-1.5 rounded-lg hover:bg-white/5">
+                <LogOut className="w-4 h-4 shrink-0" />
+                {!sidebarCollapsed && <span className="text-xs">Sign Out</span>}
+              </button>
             </div>
           )}
         </aside>
