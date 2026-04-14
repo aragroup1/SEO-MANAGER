@@ -623,6 +623,58 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
         ))}
       </div>
 
+      {/* New & Lost Keywords */}
+      {((snapshot as any).new_keywords_count > 0 || (snapshot as any).lost_keywords_count > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* New Keywords */}
+          {(snapshot as any).new_keywords?.length > 0 && (
+            <div className="bg-green-500/5 backdrop-blur-md rounded-xl p-4 border border-green-500/20">
+              <h3 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
+                <ArrowUp className="w-4 h-4 text-green-400" />
+                New Keywords
+                <span className="text-xs bg-green-500/20 text-green-400 px-2 py-0.5 rounded-full">{(snapshot as any).new_keywords_count}</span>
+              </h3>
+              <p className="text-gray-500 text-[10px] mb-2">Keywords ranking now that weren&apos;t in the previous snapshot</p>
+              <div className="space-y-1 max-h-60 overflow-y-auto">
+                {(snapshot as any).new_keywords.map((kw: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-1.5">
+                    <span className="text-white text-sm truncate flex-1">{kw.query}</span>
+                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                      <span className={`text-xs font-bold ${kw.position <= 10 ? 'text-green-400' : kw.position <= 20 ? 'text-yellow-400' : 'text-gray-400'}`}>#{kw.position}</span>
+                      <span className="text-blue-400 text-xs">{kw.clicks}c</span>
+                      <span className="text-gray-500 text-xs">{kw.impressions?.toLocaleString()}i</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Lost Keywords */}
+          {(snapshot as any).lost_keywords?.length > 0 && (
+            <div className="bg-red-500/5 backdrop-blur-md rounded-xl p-4 border border-red-500/20">
+              <h3 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
+                <ArrowDown className="w-4 h-4 text-red-400" />
+                Lost Keywords
+                <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">{(snapshot as any).lost_keywords_count}</span>
+              </h3>
+              <p className="text-gray-500 text-[10px] mb-2">Keywords that were ranking before but dropped out</p>
+              <div className="space-y-1 max-h-60 overflow-y-auto">
+                {(snapshot as any).lost_keywords.map((kw: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-white/5 rounded-lg px-3 py-1.5">
+                    <span className="text-gray-400 text-sm truncate flex-1">{kw.query}</span>
+                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                      <span className="text-gray-500 text-xs">was #{kw.previous_position}</span>
+                      <span className="text-gray-500 text-xs">{kw.previous_clicks}c</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Tracked Keywords */}
       {trackedKeywords.length > 0 && (
         <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 backdrop-blur-md rounded-xl border border-yellow-500/20 overflow-hidden">
@@ -756,7 +808,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
                     {trackingInProgress === kw.query ? <Loader2 className="w-4 h-4 animate-spin" /> : <Star className={`w-4 h-4 ${tracked ? 'fill-yellow-400' : ''}`} />}
                   </button>
                 </div>
-                <div className="min-w-0"><p className="text-white text-sm truncate">{kw.query}</p></div>
+                <div className="min-w-0"><p className="text-white text-sm truncate">{kw.query}{(kw as any).is_new && <span className="ml-1.5 text-[9px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full font-bold">NEW</span>}</p></div>
                 <div className="text-center">
                   {kw.country ? (
                     <span className="text-sm" title={kw.country}>{getFlag(kw.country)} <span className="text-gray-400 text-xs">{kw.country}</span></span>
