@@ -130,6 +130,7 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
   const [shopifyFormVisible, setShopifyFormVisible] = useState(false);
   const [shopifyDomain, setShopifyDomain] = useState('');
   const [shopifyToken, setShopifyToken] = useState('');
+  const [shopifySecret, setShopifySecret] = useState('');
   const [shopifyConnecting, setShopifyConnecting] = useState(false);
   const [shopifyMessage, setShopifyMessage] = useState('');
 
@@ -420,30 +421,33 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
                       Connect Shopify Store
                     </h4>
                     <div className="bg-green-500/10 rounded-lg p-3 mb-3 border border-green-500/20">
-                      <p className="text-green-400 text-xs font-medium mb-1">How to get your access token:</p>
+                      <p className="text-green-400 text-xs font-medium mb-1">How to get your API credentials:</p>
                       <ol className="text-gray-400 text-xs space-y-0.5 list-decimal list-inside">
-                        <li>Shopify Admin → Settings → Apps → Develop apps</li>
-                        <li>Create an app → Configure Admin API scopes (enable products, content)</li>
-                        <li><strong className="text-white">Click &quot;Install app&quot;</strong> — this is the step that generates the token</li>
-                        <li>Copy the <strong className="text-green-400">Admin API access token</strong> (starts with shpat_) — shown only once!</li>
+                        <li>Go to the store&apos;s <strong className="text-white">Shopify Admin → Settings → Apps → Develop apps</strong></li>
+                        <li>Click <strong className="text-white">Create an app</strong> → name it anything</li>
+                        <li>Configure <strong className="text-white">Admin API scopes</strong> — enable read/write products, read/write content</li>
+                        <li><strong className="text-white">Install app</strong></li>
+                        <li>Copy the <strong className="text-green-400">API key</strong> and <strong className="text-green-400">API secret key</strong> from the app credentials page</li>
                       </ol>
                     </div>
                     <div className="space-y-2">
                       <input type="text" placeholder="Store URL (e.g. my-store.myshopify.com)" value={shopifyDomain} onChange={e => setShopifyDomain(e.target.value)}
                         className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-green-500" />
-                      <input type="password" placeholder="Admin API access token (shpat_...)" value={shopifyToken} onChange={e => setShopifyToken(e.target.value)}
+                      <input type="text" placeholder="API key" value={shopifyToken} onChange={e => setShopifyToken(e.target.value)}
+                        className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-green-500" />
+                      <input type="password" placeholder="API secret key" value={shopifySecret} onChange={e => setShopifySecret(e.target.value)}
                         className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-green-500" />
                       {shopifyMessage && (
-                        <p className={`text-xs p-2 rounded-lg ${shopifyMessage.includes('✓') ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'}`}>{shopifyMessage}</p>
+                        <p className={`text-xs p-2 rounded-lg ${shopifyMessage.includes('✓') || shopifyMessage.includes('connected') ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'}`}>{shopifyMessage}</p>
                       )}
                       <div className="flex gap-2 mt-2">
                         <button onClick={async () => {
-                          if (!shopifyDomain || !shopifyToken) { setShopifyMessage('Store URL and access token are both required'); return; }
+                          if (!shopifyDomain || !shopifyToken || !shopifySecret) { setShopifyMessage('All three fields are required'); return; }
                           setShopifyConnecting(true); setShopifyMessage('');
                           try {
                             const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/integrations/${websiteId}/connect`, {
                               method: 'POST', headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ integration_id: 'shopify', shop_domain: shopifyDomain, access_token: shopifyToken })
+                              body: JSON.stringify({ integration_id: 'shopify', shop_domain: shopifyDomain, api_key: shopifyToken, api_secret: shopifySecret })
                             });
                             const d = await r.json();
                             if (d.connected) { setShopifyMessage(d.message); fetchIntegrationStatus(); onIntegrationChange?.(); setTimeout(() => setShopifyFormVisible(false), 1500); }
@@ -453,7 +457,7 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
                         }} disabled={shopifyConnecting}
                           className="flex-1 bg-green-500/20 text-green-400 px-3 py-2 rounded-lg text-sm font-medium hover:bg-green-500/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50">
                           {shopifyConnecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3" />}
-                          {shopifyConnecting ? 'Connecting...' : 'Connect'}
+                          {shopifyConnecting ? 'Connecting...' : 'Connect Store'}
                         </button>
                         <button onClick={() => { setShopifyFormVisible(false); setShopifyMessage(''); }}
                           className="bg-white/10 text-gray-400 px-3 py-2 rounded-lg text-sm hover:bg-white/20 transition-all">
