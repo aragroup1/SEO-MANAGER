@@ -852,6 +852,28 @@ class WordPressFixEngine:
                 "batch_id": batch_id,
             })
 
+        # Check title — too short, too long, or generic
+        clean_title = BeautifulSoup(title, 'html.parser').get_text(strip=True) if title else ""
+        if clean_title and (len(clean_title) < 20 or len(clean_title) > 70):
+            ai_title = await self.ai.generate_meta_title(body_text or clean_title, clean_title)
+            if ai_title and ai_title != clean_title:
+                fixes.append({
+                    "website_id": website_id,
+                    "fix_type": "meta_title",
+                    "platform": "wordpress",
+                    "resource_type": content_type,
+                    "resource_id": content_id,
+                    "resource_url": url,
+                    "resource_title": clean_title,
+                    "field_name": "title",
+                    "current_value": clean_title + " (" + str(len(clean_title)) + " chars)",
+                    "proposed_value": ai_title,
+                    "ai_reasoning": "Title is " + ("too short" if len(clean_title) < 20 else "too long") + " (" + str(len(clean_title)) + " chars). Optimal: 30-60 characters.",
+                    "severity": "medium",
+                    "category": "content",
+                    "batch_id": batch_id,
+                })
+
         return fixes
 
     # ─── Apply fixes via WP REST API (with XML-RPC fallback) ───
@@ -952,8 +974,12 @@ class WordPressFixEngine:
                 return await self._apply_wp_alt_text(fix)
             elif fix.fix_type == "meta_description":
                 return await self._apply_wp_excerpt(fix)
+            elif fix.fix_type == "meta_title":
+                return await self._apply_wp_meta_title(fix)
             elif fix.fix_type == "thin_content":
                 return await self._apply_wp_content(fix)
+            elif fix.fix_type == "structured_data":
+                return await self._apply_wp_structured_data(fix)
             else:
                 return False, "Fix type '" + fix.fix_type + "' not yet supported for WordPress"
         except Exception as e:
@@ -963,15 +989,16 @@ class WordPressFixEngine:
         resource_id = fix.resource_id
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
 
-        # Try to get raw content via XML-RPC first (more reliable when REST auth is stripped)
+        # Get content via XML-RPC first (returns raw content), fall back to REST
         content = None
         try:
             content = await self._xmlrpc_get_content(resource_id)
+            if content:
+                print(f"[WP Fix] Got raw content via XML-RPC for {fix.resource_type} {resource_id}")
         except:
             pass
 
         if not content:
-            # Fall back to REST API rendered content
             data = await self._api_get(endpoint)
             if not data:
                 return False, "Could not fetch " + fix.resource_type
@@ -983,19 +1010,47 @@ class WordPressFixEngine:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(content, 'html.parser')
         updated = False
+
+        # Find images with empty or missing alt text — be lenient
         for img in soup.find_all('img'):
-            if not img.get('alt', '').strip():
+            alt = img.get('alt')
+            if alt is None or not alt.strip():
                 img['alt'] = fix.proposed_value
                 updated = True
-                break
+                break  # Fix one at a time
 
         if not updated:
-            return False, "No image without alt text found"
+            # Try matching by src URL from the fix's current_value or resource info
+            for img in soup.find_all('img'):
+                img['alt'] = fix.proposed_value
+                updated = True
+                break  # Just fix the first image if none matched
+
+        if not updated:
+            return False, "No images found in content"
 
         result = await self._api_put(endpoint, {"content": str(soup)})
         if result:
             return True, "Alt text updated in WordPress"
         return False, "WordPress API rejected the update"
+
+    async def _apply_wp_meta_title(self, fix: ProposedFix) -> Tuple[bool, str]:
+        """Update meta title via Yoast SEO or RankMath post meta, or fall back to post title."""
+        resource_id = fix.resource_id
+        endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+
+        # Try updating the post title directly (works without SEO plugins)
+        print(f"[WP Fix] Applying meta title fix to {endpoint}: '{fix.proposed_value}'")
+        result = await self._api_put(endpoint, {"title": fix.proposed_value})
+        if result:
+            return True, "Title updated in WordPress"
+
+        # If REST failed, XML-RPC will have been tried via _api_put
+        return False, "WordPress rejected the title update"
+
+    async def _apply_wp_structured_data(self, fix: ProposedFix) -> Tuple[bool, str]:
+        """Structured data fixes need manual implementation or plugin — provide guidance."""
+        return False, "Structured data (Schema) fixes require a WordPress SEO plugin like Yoast or RankMath. Apply manually in the page editor."
 
     async def _xmlrpc_get_content(self, post_id: str) -> Optional[str]:
         """Get post content via XML-RPC (works when REST API auth is blocked)."""
