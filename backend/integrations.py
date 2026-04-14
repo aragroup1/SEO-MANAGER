@@ -185,12 +185,103 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
             "https://backend-production-6104.up.railway.app/api/integrations/oauth/shopify/callback"
         )
 
-        # Support direct access token (Admin API key) — no OAuth needed
+        # Support multiple connection methods:
+        # 1. API key + secret (custom app created in the store's admin)
+        # 2. Direct access token (if the store still provides one)
+        # 3. OAuth flow (for stores in the same organization)
+        api_key = data.get("api_key", "").strip()
+        api_secret = data.get("api_secret", "").strip()
         direct_token = data.get("access_token", "").strip()
         shop_domain = data.get("shop_domain", "")
 
-        print(f"[Shopify] Connect attempt: shop_domain='{shop_domain}', has_direct_token={bool(direct_token)}, has_client_id={bool(shopify_client_id)}")
+        print(f"[Shopify] Connect attempt: shop_domain='{shop_domain}', has_api_key={bool(api_key)}, has_api_secret={bool(api_secret)}, has_direct_token={bool(direct_token)}, has_client_id={bool(shopify_client_id)}")
 
+        # ─── Method 1: API Key + Secret (Custom App in store admin) ───
+        if api_key and api_secret:
+            if not shop_domain:
+                return {"connected": False, "message": "Shop domain is required."}
+
+            shop_domain = shop_domain.replace("https://", "").replace("http://", "").rstrip("/")
+            if not shop_domain.endswith(".myshopify.com"):
+                shop_domain = shop_domain + ".myshopify.com"
+
+            # Exchange API key + secret for an access token via Shopify Admin API
+            # Custom apps use the API secret as the access token directly
+            access_token = api_secret
+
+            # Verify it works
+            try:
+                import httpx as httpx_lib
+                async with httpx_lib.AsyncClient(timeout=15) as tc:
+                    test_r = await tc.get(
+                        f"https://{shop_domain}/admin/api/2024-01/shop.json",
+                        headers={"X-Shopify-Access-Token": access_token}
+                    )
+                    print(f"[Shopify] API secret as token test: {test_r.status_code}")
+
+                    if test_r.status_code == 200:
+                        shop_name = test_r.json().get("shop", {}).get("name", shop_domain)
+                    elif test_r.status_code == 401:
+                        # Try with API key as token instead
+                        test_r2 = await tc.get(
+                            f"https://{shop_domain}/admin/api/2024-01/shop.json",
+                            headers={"X-Shopify-Access-Token": api_key}
+                        )
+                        print(f"[Shopify] API key as token test: {test_r2.status_code}")
+
+                        if test_r2.status_code == 200:
+                            access_token = api_key
+                            shop_name = test_r2.json().get("shop", {}).get("name", shop_domain)
+                        else:
+                            # Try Basic auth with key:secret
+                            import base64
+                            basic_auth = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
+                            test_r3 = await tc.get(
+                                f"https://{shop_domain}/admin/api/2024-01/shop.json",
+                                headers={"Authorization": f"Basic {basic_auth}"}
+                            )
+                            print(f"[Shopify] Basic auth test: {test_r3.status_code}")
+
+                            if test_r3.status_code == 200:
+                                # Store as special format for basic auth
+                                access_token = f"basic:{api_key}:{api_secret}"
+                                shop_name = test_r3.json().get("shop", {}).get("name", shop_domain)
+                            else:
+                                return {"connected": False, "message": f"Could not authenticate with Shopify. API key/secret rejected ({test_r.status_code}, {test_r2.status_code}, {test_r3.status_code}). Make sure the app is installed and has the right scopes."}
+                    else:
+                        return {"connected": False, "message": f"Shopify returned {test_r.status_code}. Check the store URL."}
+            except Exception as e:
+                return {"connected": False, "message": f"Cannot reach {shop_domain}: {str(e)[:100]}"}
+
+            # Save
+            website = db.query(Website).filter(Website.id == website_id).first()
+            if website:
+                website.shopify_store_url = shop_domain
+                website.shopify_access_token = access_token
+
+            existing = db.query(Integration).filter(
+                Integration.website_id == website_id,
+                Integration.integration_type == "shopify"
+            ).first()
+            if existing:
+                existing.status = "active"
+                existing.access_token = access_token
+                existing.connected_at = datetime.utcnow()
+                existing.account_name = shop_name
+                existing.config = {"store_url": shop_domain, "shop_domain": shop_domain, "auth_method": "api_key_secret"}
+            else:
+                new_integration = Integration(
+                    website_id=website_id, integration_type="shopify", status="active",
+                    access_token=access_token, connected_at=datetime.utcnow(),
+                    account_name=shop_name,
+                    config={"store_url": shop_domain, "shop_domain": shop_domain, "auth_method": "api_key_secret"},
+                    scopes=[]
+                )
+                db.add(new_integration)
+            db.commit()
+            return {"connected": True, "message": f"Shopify connected: {shop_name} ✓"}
+
+        # ─── Method 2: Direct access token ───
         if direct_token:
             # Direct connection with Admin API access token or API key+secret
             if not shop_domain:
