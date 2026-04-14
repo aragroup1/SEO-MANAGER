@@ -106,8 +106,8 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
       description: 'Sync products, manage meta tags, and optimize listings',
       icon: ShoppingCart,
       connected: false,
-      required: true,
-      relevantFor: ['shopify'],
+      required: false,
+      relevantFor: ['custom', 'shopify', 'wordpress'],
       dataProvided: 'Product data, collection structure, meta fields'
     },
     {
@@ -116,8 +116,8 @@ export default function IntegrationSetupChecklist({ websiteId, siteType, onInteg
       description: 'Sync posts, manage Yoast/RankMath settings, and optimize content',
       icon: Layers,
       connected: false,
-      required: true,
-      relevantFor: ['wordpress'],
+      required: false,
+      relevantFor: ['custom', 'shopify', 'wordpress'],
       dataProvided: 'Posts, pages, plugin settings, sitemap data'
     }
   ];
