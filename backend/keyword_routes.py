@@ -339,6 +339,98 @@ async def get_strategy(website_id: int, keyword_id: int, db: Session = Depends(g
         return {"strategy": None, "notes": tk.notes}
 
 
+# ─── Live Rankings via Serper.dev (on-demand, 6h cache) ───
+
+@router.post("/{website_id}/refresh-live")
+async def refresh_live_rankings(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Fetch real-time SERP positions for tracked keywords via Serper.dev.
+    Cached 6h per keyword. Pass {"force": true} to bypass cache."""
+    import httpx
+    from datetime import datetime, timedelta
+
+    SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+    if not SERPER_API_KEY:
+        return {"error": "SERPER_API_KEY not configured", "message": "Add SERPER_API_KEY to Railway env vars (get one at serper.dev)."}
+
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    body = {}
+    try:
+        body = await request.json()
+    except:
+        pass
+    force = bool(body.get("force"))
+    keyword_ids = body.get("keyword_ids")  # optional list to refresh specific ones
+    country = (body.get("country") or "gb").lower()
+
+    q = db.query(TrackedKeyword).filter(TrackedKeyword.website_id == website_id)
+    if keyword_ids:
+        q = q.filter(TrackedKeyword.id.in_(keyword_ids))
+    tracked = q.all()
+    if not tracked:
+        return {"updated": 0, "skipped": 0, "message": "No tracked keywords."}
+
+    domain = (website.domain or "").lower().replace("https://", "").replace("http://", "").rstrip("/")
+    if not domain:
+        return {"error": "Website has no domain"}
+
+    cache_cutoff = datetime.utcnow() - timedelta(hours=6)
+    updated_count = 0
+    skipped_count = 0
+    results = []
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        for tk in tracked:
+            if not force and tk.updated_at and tk.updated_at > cache_cutoff:
+                skipped_count += 1
+                results.append({"id": tk.id, "keyword": tk.keyword, "status": "cached", "position": tk.current_position, "url": tk.ranking_url})
+                continue
+            try:
+                resp = await client.post(
+                    "https://google.serper.dev/search",
+                    headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+                    json={"q": tk.keyword, "gl": country, "num": 100}
+                )
+                if resp.status_code != 200:
+                    print(f"[Serper] {tk.keyword}: HTTP {resp.status_code} {resp.text[:200]}")
+                    results.append({"id": tk.id, "keyword": tk.keyword, "status": "error", "message": f"HTTP {resp.status_code}"})
+                    continue
+                data = resp.json()
+                organic = data.get("organic", [])
+                found_pos = None
+                found_url = None
+                for item in organic:
+                    link = (item.get("link") or "").lower()
+                    if domain in link:
+                        found_pos = item.get("position")
+                        found_url = item.get("link")
+                        break
+                if found_pos:
+                    tk.current_position = float(found_pos)
+                    tk.ranking_url = found_url
+                else:
+                    tk.current_position = None
+                    tk.ranking_url = None
+                tk.updated_at = datetime.utcnow()
+                updated_count += 1
+                results.append({"id": tk.id, "keyword": tk.keyword, "status": "updated", "position": found_pos, "url": found_url})
+                print(f"[Serper] {tk.keyword}: #{found_pos or 'N/R'} -> {found_url or '-'}")
+            except Exception as e:
+                print(f"[Serper] {tk.keyword} error: {e}")
+                results.append({"id": tk.id, "keyword": tk.keyword, "status": "error", "message": str(e)})
+
+    db.commit()
+    return {
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "total": len(tracked),
+        "source": "serper",
+        "results": results,
+    }
+
+
 # ─── Search Volume Lookup (DataForSEO) with Daily Cache ───
 
 @router.post("/{website_id}/search-volumes")

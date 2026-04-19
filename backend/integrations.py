@@ -538,22 +538,37 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
 </methodCall>"""
                         xmlrpc_resp = await test_client.post(xmlrpc_url, content=xml_test.encode(),
                             headers={"Content-Type": "text/xml; charset=utf-8"})
+                        xmlrpc_fault = None
                         if xmlrpc_resp.status_code == 200 and "<name>blogid</name>" in xmlrpc_resp.text:
                             xmlrpc_ok = True
-                            print(f"[WordPress] XML-RPC fallback available ✓")
+                            print(f"[WordPress] XML-RPC fallback available (auth verified) OK")
+                        elif xmlrpc_resp.status_code == 200 and "faultString" in xmlrpc_resp.text:
+                            import re as _re
+                            m = _re.search(r"faultString.*?<string>(.*?)</string>", xmlrpc_resp.text, _re.DOTALL)
+                            xmlrpc_fault = m.group(1).strip() if m else "Unknown XML-RPC fault"
+                            print(f"[WordPress] XML-RPC auth FAILED: {xmlrpc_fault}")
                         elif xmlrpc_resp.status_code == 403:
+                            xmlrpc_fault = "XML-RPC blocked by security plugin (403)"
                             print(f"[WordPress] XML-RPC also blocked (403)")
+                        elif xmlrpc_resp.status_code == 404 or "xmlrpc" in xmlrpc_resp.text.lower() and "disabled" in xmlrpc_resp.text.lower():
+                            xmlrpc_fault = f"XML-RPC disabled on this site ({xmlrpc_resp.status_code})"
+                            print(f"[WordPress] XML-RPC disabled: {xmlrpc_resp.status_code}")
                         else:
-                            print(f"[WordPress] XML-RPC test: {xmlrpc_resp.status_code} {xmlrpc_resp.text[:100]}")
+                            xmlrpc_fault = f"XML-RPC unexpected response ({xmlrpc_resp.status_code})"
+                            print(f"[WordPress] XML-RPC test: {xmlrpc_resp.status_code} {xmlrpc_resp.text[:200]}")
                     except Exception as xe:
+                        xmlrpc_fault = f"XML-RPC error: {xe}"
                         print(f"[WordPress] XML-RPC test error: {xe}")
 
-                    _save_wp_integration(db, website_id, wp_url, wp_username, wp_app_password)
-
                     if xmlrpc_ok:
-                        return {"connected": True, "message": f"WordPress connected: {wp_url}. REST API blocked by security plugin — will use XML-RPC fallback for fixes ✓"}
-                    else:
-                        return {"connected": True, "message": f"WordPress connected (read-only). ⚠️ Both REST API and XML-RPC blocked by security plugin. To enable fixes, whitelist the REST API in your security plugin settings (Wordfence → Firewall → Whitelist, or iThemes → REST API settings)."}
+                        _save_wp_integration(db, website_id, wp_url, wp_username, wp_app_password)
+                        return {"connected": True, "message": f"WordPress connected: {wp_url}. REST API blocked by security plugin — will use XML-RPC fallback for fixes (auth verified)."}
+
+                    # Neither REST write nor XML-RPC auth works — refuse to save a broken integration
+                    print(f"[WordPress] Connection REJECTED: REST write failed ({write_msg}) AND XML-RPC failed ({xmlrpc_fault})")
+                    if xmlrpc_fault and ("username" in xmlrpc_fault.lower() or "password" in xmlrpc_fault.lower() or "incorrect" in xmlrpc_fault.lower()):
+                        return {"connected": False, "message": f"WordPress credentials rejected. XML-RPC says: '{xmlrpc_fault}'. Verify the username is an admin, and the application password is freshly generated (Users → Profile → Application Passwords). Paste it with or without spaces — we strip them."}
+                    return {"connected": False, "message": f"Cannot write to WordPress. REST API: {write_msg}. XML-RPC: {xmlrpc_fault}. Either whitelist /wp-json/ in your security plugin, or enable XML-RPC and verify the application password."}
 
         except Exception as e:
             print(f"[WordPress] Connection test FAILED: {e}")

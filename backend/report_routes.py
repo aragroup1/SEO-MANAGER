@@ -69,255 +69,427 @@ def _safe(text, max_len=200):
     return s.encode('latin-1', errors='replace').decode('latin-1')
 
 
+def _health_color(score):
+    """Return RGB tuple based on health score."""
+    if score >= 80: return (16, 185, 129)    # green
+    if score >= 60: return (245, 158, 11)    # amber
+    if score >= 40: return (239, 68, 68)     # red
+    return (156, 163, 175)                    # grey (unknown)
+
+
+def _health_label(score):
+    if score >= 80: return "Excellent"
+    if score >= 60: return "Good"
+    if score >= 40: return "Needs Work"
+    if score > 0:   return "Critical"
+    return "Not Scored"
+
+
+def _draw_section_header(pdf, title, subtitle=""):
+    """Purple gradient-ish section bar."""
+    pdf.set_fill_color(139, 92, 246)  # purple-500
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 11, f"  {_safe(title)}", ln=True, fill=True)
+    if subtitle:
+        pdf.set_fill_color(245, 243, 255)
+        pdf.set_text_color(107, 33, 168)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(0, 7, f"  {_safe(subtitle)}", ln=True, fill=True)
+    pdf.set_text_color(30, 30, 30)
+    pdf.ln(4)
+
+
+def _draw_metric_card(pdf, x, y, w, h, label, value, accent_rgb, sub=""):
+    """Draw a rounded-ish metric card (rectangle with colored accent)."""
+    # Card background
+    pdf.set_fill_color(250, 250, 252)
+    pdf.rect(x, y, w, h, style="F")
+    # Left accent stripe
+    pdf.set_fill_color(*accent_rgb)
+    pdf.rect(x, y, 2.5, h, style="F")
+    # Label
+    pdf.set_xy(x + 5, y + 3)
+    pdf.set_text_color(107, 114, 128)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(w - 6, 5, _safe(label), ln=0)
+    # Value
+    pdf.set_xy(x + 5, y + 9)
+    pdf.set_text_color(17, 24, 39)
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(w - 6, 8, _safe(str(value)), ln=0)
+    # Subtext
+    if sub:
+        pdf.set_xy(x + 5, y + h - 7)
+        pdf.set_text_color(*accent_rgb)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(w - 6, 5, _safe(sub), ln=0)
+    pdf.set_text_color(30, 30, 30)
+
+
 def _generate_pdf_fpdf(data: dict) -> bytes:
-    """Generate comprehensive PDF using fpdf2."""
+    """Client-friendly SEO report PDF — plain English, visual, simplified."""
     from fpdf import FPDF
 
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_auto_page_break(auto=True, margin=18)
 
-    # ─── Page 1: Cover + Health Score ───
+    audit = data.get("audit") or {}
+    kw = data.get("keywords") or {}
+    fixes = data.get("fixes", {}) or {}
+    tracked = data.get("tracked_keywords", []) or []
+    inception = data.get("since_inception") or {}
+    domain = data.get("domain", "")
+
+    score = audit.get("health_score", 0) or 0
+    score_color = _health_color(score)
+    score_label = _health_label(score)
+
+    # ══════════════ PAGE 1: COVER ══════════════
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 24)
-    pdf.cell(0, 15, "SEO Intelligence Report", ln=True, align="C")
+    # Purple banner top
+    pdf.set_fill_color(139, 92, 246)
+    pdf.rect(0, 0, 210, 70, style="F")
+    # Pink accent bar
+    pdf.set_fill_color(236, 72, 153)
+    pdf.rect(0, 70, 210, 3, style="F")
+
+    pdf.set_xy(15, 22)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 30)
+    pdf.cell(0, 12, "SEO Report", ln=True)
+    pdf.set_xy(15, 36)
     pdf.set_font("Helvetica", "", 14)
-    pdf.cell(0, 10, _safe(data.get("domain", "")), ln=True, align="C")
+    pdf.cell(0, 8, _safe(domain), ln=True)
+    pdf.set_xy(15, 47)
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 7, "Generated: " + _safe(data.get("generated_at", "")[:10]), ln=True, align="C")
-    pdf.cell(0, 7, "Report Period: " + _safe(data.get("report_month", "current")), ln=True, align="C")
-    pdf.ln(10)
+    pdf.cell(0, 6, f"Reporting period: {_safe(data.get('report_month', 'Current'))}", ln=True)
+    pdf.set_xy(15, 53)
+    pdf.cell(0, 6, f"Generated {_safe(data.get('generated_at', '')[:10])}", ln=True)
 
-    audit = data.get("audit")
-    kw = data.get("keywords")
-    fixes = data.get("fixes", {})
-    tracked = data.get("tracked_keywords", [])
-    inception = data.get("since_inception")
+    pdf.set_text_color(30, 30, 30)
+    pdf.set_y(90)
 
-    # ─── Health Score Section ───
-    if audit:
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.set_fill_color(240, 240, 250)
-        pdf.cell(0, 10, "  Site Health Overview", ln=True, fill=True)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.ln(3)
+    # Health gauge block
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(107, 114, 128)
+    pdf.cell(0, 7, "Overall Site Health", ln=True, align="C")
+    pdf.ln(2)
+    # Big score
+    pdf.set_font("Helvetica", "B", 60)
+    pdf.set_text_color(*score_color)
+    pdf.cell(0, 22, f"{int(score)}", ln=True, align="C")
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 6, _safe(score_label), ln=True, align="C")
+    pdf.set_text_color(107, 114, 128)
+    pdf.set_font("Helvetica", "", 9)
+    change = audit.get("score_change", 0) or 0
+    if change:
+        arrow = "+" if change > 0 else ""
+        pdf.cell(0, 6, f"{arrow}{change} vs previous period", ln=True, align="C")
+    pdf.ln(6)
 
-        score = audit.get("health_score", 0)
-        prev = audit.get("previous_score", score)
-        change = round(score - prev, 1)
+    # Quick numbers strip
+    y0 = pdf.get_y()
+    cards_w = 58
+    gap = 3
+    start_x = (210 - (cards_w * 3 + gap * 2)) / 2
+    _draw_metric_card(pdf, start_x, y0, cards_w, 22, "Keywords Ranking", kw.get("total", 0) or 0, (139, 92, 246),
+                      f"{kw.get('keywords_change', 0):+d}" if kw.get('keywords_change') else "")
+    _draw_metric_card(pdf, start_x + cards_w + gap, y0, cards_w, 22, "Monthly Visitors", kw.get("total_clicks", 0) or 0, (236, 72, 153),
+                      f"{kw.get('clicks_change', 0):+d}" if kw.get('clicks_change') else "")
+    _draw_metric_card(pdf, start_x + (cards_w + gap) * 2, y0, cards_w, 22, "Fixes Applied", fixes.get("applied", 0) or 0, (16, 185, 129),
+                      f"+{fixes.get('applied_this_month', 0)} this period" if fixes.get('applied_this_month') else "")
+    pdf.set_y(y0 + 30)
 
-        pdf.cell(95, 8, f"Health Score: {score}/100 ({'+' if change > 0 else ''}{change})", ln=False)
-        pdf.cell(95, 8, f"Pages Crawled: {audit.get('pages_crawled', 'N/A')}", ln=True)
-        pdf.cell(95, 8, f"Total Issues: {audit.get('total_issues', 0)} ({audit.get('issues_change', 0):+d} vs previous)", ln=False)
-        pdf.cell(95, 8, f"Critical Issues: {audit.get('critical_issues', 0)}", ln=True)
-        pdf.ln(2)
+    # Plain-english what-this-means
+    pdf.set_fill_color(245, 243, 255)
+    pdf.set_text_color(76, 29, 149)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 8, "  What this report covers", ln=True, fill=True)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(55, 65, 81)
+    pdf.set_fill_color(250, 245, 255)
+    bullets = [
+        "Your site's overall SEO health and how it's trending.",
+        "Which keywords are bringing in the most visitors from Google.",
+        "Which rankings went up, which went down, and why it matters.",
+        "Technical improvements we completed this period.",
+        "What's next and where the biggest opportunities are.",
+    ]
+    for b in bullets:
+        pdf.cell(5, 6, "", ln=0)
+        pdf.cell(0, 6, f"- {_safe(b)}", ln=True)
+    pdf.set_text_color(30, 30, 30)
 
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, "Category Scores:", ln=True)
-        pdf.set_font("Helvetica", "", 10)
-        for label, key in [("Technical", "technical_score"), ("Content", "content_score"),
-                           ("Performance", "performance_score"), ("Mobile", "mobile_score"), ("Security", "security_score")]:
-            pdf.cell(38, 7, f"{label}: {audit.get(key, 0)}/100", ln=False)
-        pdf.ln(10)
-
-        # CWV
-        cwv = audit.get("core_web_vitals", {})
-        if cwv and cwv.get("lcp"):
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, "Core Web Vitals:", ln=True)
-            pdf.set_font("Helvetica", "", 10)
-            pdf.cell(48, 7, f"LCP: {cwv.get('lcp', 'N/A')}s", ln=False)
-            pdf.cell(48, 7, f"CLS: {cwv.get('cls', 'N/A')}", ln=False)
-            pdf.cell(48, 7, f"TBT: {cwv.get('tbt', 'N/A')}ms", ln=False)
-            pdf.cell(48, 7, f"Perf: {cwv.get('performance_score', 'N/A')}/100", ln=True)
-            pdf.ln(3)
-
-        # Top Issues
-        issues = audit.get("top_issues", [])
-        if issues:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, f"Top Issues ({len(issues)} found):", ln=True)
-            pdf.set_font("Helvetica", "", 9)
-            for issue in issues[:10]:
-                pdf.cell(0, 6, f"  [{_safe(issue.get('severity',''))}] {_safe(issue.get('type',''))} - affects {issue.get('count',1)} page(s)", ln=True)
-
-    # ─── Page 2: Organic Search Performance ───
+    # ══════════════ PAGE 2: EXECUTIVE SUMMARY ══════════════
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_fill_color(240, 240, 250)
-    pdf.cell(0, 10, "  Organic Search Performance", ln=True, fill=True)
-    pdf.ln(3)
+    _draw_section_header(pdf, "The Headline", "A quick read on how your site is performing.")
 
-    if kw:
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, "Current Period", ln=True)
-        pdf.set_font("Helvetica", "", 11)
+    # Health breakdown cards
+    y0 = pdf.get_y()
+    cat_w = 37
+    cat_gap = 1.5
+    cats = [
+        ("Technical", audit.get("technical_score", 0) or 0),
+        ("Content", audit.get("content_score", 0) or 0),
+        ("Speed", audit.get("performance_score", 0) or 0),
+        ("Mobile", audit.get("mobile_score", 0) or 0),
+        ("Security", audit.get("security_score", 0) or 0),
+    ]
+    cx = (210 - (cat_w * 5 + cat_gap * 4)) / 2
+    for label, val in cats:
+        _draw_metric_card(pdf, cx, y0, cat_w, 24, label, f"{int(val)}", _health_color(val), _health_label(val))
+        cx += cat_w + cat_gap
+    pdf.set_y(y0 + 30)
 
-        pdf.cell(95, 8, f"Total Keywords Ranking: {kw.get('total', 0)}", ln=False)
-        pdf.cell(95, 8, f"Change: {kw.get('keywords_change', 0):+d}", ln=True)
-        pdf.cell(95, 8, f"Total Clicks: {kw.get('total_clicks', 0)}", ln=False)
-        pdf.cell(95, 8, f"Change: {kw.get('clicks_change', 0):+d}", ln=True)
-        pdf.cell(95, 8, f"Total Impressions: {kw.get('total_impressions', 0)}", ln=False)
-        pdf.cell(95, 8, f"Change: {kw.get('impressions_change', 0):+d}", ln=True)
-        pdf.cell(95, 8, f"Avg Position: {kw.get('avg_position', 0)}", ln=False)
-        pdf.cell(95, 8, f"Avg CTR: {kw.get('avg_ctr', 0)}%", ln=True)
-        pdf.ln(2)
+    # Issues summary
+    total_issues = audit.get("total_issues", 0) or 0
+    critical = audit.get("critical_issues", 0) or 0
+    issues_change = audit.get("issues_change", 0) or 0
+    pages_crawled = audit.get("pages_crawled", 0) or 0
 
+    pdf.set_fill_color(249, 250, 251)
+    pdf.rect(15, pdf.get_y(), 180, 28, style="F")
+    pdf.set_xy(20, pdf.get_y() + 3)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(107, 114, 128)
+    pdf.cell(170, 5, "SITE SCAN RESULTS", ln=True)
+    pdf.set_xy(20, pdf.get_y() + 1)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(30, 30, 30)
+    scan_line = f"We scanned {pages_crawled} pages and found {total_issues} things to fix"
+    if critical:
+        scan_line += f" — {critical} need attention now."
+    else:
+        scan_line += "."
+    pdf.cell(170, 6, _safe(scan_line), ln=True)
+    if issues_change:
+        pdf.set_x(20)
+        trend_color = (16, 185, 129) if issues_change < 0 else (239, 68, 68)
+        pdf.set_text_color(*trend_color)
+        pdf.set_font("Helvetica", "B", 10)
+        direction = "fewer" if issues_change < 0 else "more"
+        pdf.cell(170, 6, f"{abs(issues_change)} {direction} issues than last period.", ln=True)
+        pdf.set_text_color(30, 30, 30)
+    pdf.ln(6)
+
+    # Core Web Vitals (plain english)
+    cwv = audit.get("core_web_vitals", {}) or {}
+    if cwv and cwv.get("lcp"):
         pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, "Ranking Distribution:", ln=True)
+        pdf.set_text_color(76, 29, 149)
+        pdf.cell(0, 7, "Page Speed (what Google measures)", ln=True)
+        pdf.set_text_color(30, 30, 30)
         pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 7, f"  Top 3: {kw.get('top3', 0)}  |  Top 10: {kw.get('top10', 0)}  |  Top 20: {kw.get('top20', 0)}", ln=True)
-        pdf.ln(3)
+        lcp = cwv.get("lcp", 0) or 0
+        try: lcp_f = float(lcp)
+        except: lcp_f = 0
+        lcp_verdict = "Fast" if lcp_f <= 2.5 else ("OK" if lcp_f <= 4 else "Slow")
+        perf = cwv.get("performance_score", 0) or 0
+        pdf.multi_cell(0, 5, _safe(f"Main content loads in {lcp}s ({lcp_verdict}). Overall speed score: {perf}/100."))
+        pdf.ln(4)
 
-        # Ranking changes
-        rc = kw.get("ranking_changes", {})
-        improved = rc.get("improved", [])
-        declined = rc.get("declined", [])
-
-        if improved:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, f"Rankings Improved ({rc.get('total_improved', len(improved))}):", ln=True)
-            pdf.set_font("Helvetica", "", 9)
-            for c in improved[:8]:
-                pdf.cell(0, 6, f"  {_safe(c.get('query',''))}:  #{c.get('previous','')} -> #{c.get('current','')}  (+{c.get('change','')} positions)", ln=True)
+    # AI narrative (condensed)
+    ai_summary = data.get("ai_summary", "") or ""
+    if ai_summary:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(76, 29, 149)
+        pdf.cell(0, 7, "What this means for your business", ln=True)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_font("Helvetica", "", 9.5)
+        paragraphs = [p.strip() for p in ai_summary.split("\n\n") if p.strip()][:3]
+        for para in paragraphs:
+            pdf.multi_cell(0, 5, _safe(para, 800))
             pdf.ln(2)
 
-        if declined:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, f"Rankings Declined ({rc.get('total_declined', len(declined))}):", ln=True)
-            pdf.set_font("Helvetica", "", 9)
-            for c in declined[:8]:
-                pdf.cell(0, 6, f"  {_safe(c.get('query',''))}:  #{c.get('previous','')} -> #{c.get('current','')}  ({c.get('change','')} positions)", ln=True)
-            pdf.ln(2)
-
-        # Top keywords table
-        top_kws = kw.get("top_keywords", [])
-        if top_kws:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, "Top 15 Keywords:", ln=True)
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.cell(80, 6, "Keyword", ln=False)
-            pdf.cell(20, 6, "Position", ln=False, align="R")
-            pdf.cell(25, 6, "Clicks", ln=False, align="R")
-            pdf.cell(30, 6, "Impressions", ln=False, align="R")
-            pdf.cell(20, 6, "Country", ln=True, align="R")
-            pdf.set_font("Helvetica", "", 8)
-            for k in top_kws[:15]:
-                pdf.cell(80, 5, _safe(k.get("query", ""), 50), ln=False)
-                pdf.cell(20, 5, str(k.get("position", "")), ln=False, align="R")
-                pdf.cell(25, 5, str(k.get("clicks", 0)), ln=False, align="R")
-                pdf.cell(30, 5, str(k.get("impressions", 0)), ln=False, align="R")
-                pdf.cell(20, 5, _safe(k.get("country", "")), ln=True, align="R")
-
-    # ─── Since Inception ───
-    if inception:
-        pdf.ln(5)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, f"Since Tracking Began ({_safe(inception.get('tracking_started',''))})", ln=True)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(95, 7, f"Keywords: {inception.get('initial_keywords',0)} -> {kw.get('total',0) if kw else 0} ({inception.get('keywords_growth',0):+d})", ln=False)
-        pdf.cell(95, 7, f"Clicks: {inception.get('initial_clicks',0)} -> {kw.get('total_clicks',0) if kw else 0} ({inception.get('clicks_growth',0):+d})", ln=True)
-        pdf.cell(95, 7, f"Impressions: {inception.get('initial_impressions',0)} -> {kw.get('total_impressions',0) if kw else 0} ({inception.get('impressions_growth',0):+d})", ln=False)
-        pdf.cell(95, 7, f"Avg Position Change: {inception.get('position_change',0):+.1f}", ln=True)
-        pdf.cell(95, 7, f"Total Audits Run: {inception.get('total_audits',0)}", ln=False)
-        pdf.cell(95, 7, f"Total Fixes Applied: {inception.get('total_fixes_applied',0)}", ln=True)
-
-    # ─── Page 3: Tracked Keywords + Work Done ───
+    # ══════════════ PAGE 3: RANKING WINS ══════════════
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_fill_color(240, 240, 250)
-    pdf.cell(0, 10, "  Primary Keyword Tracking (Road to #1)", ln=True, fill=True)
-    pdf.ln(3)
+    _draw_section_header(pdf, "Where You Show Up on Google", "Your keywords, visitors, and where rankings moved.")
 
+    # Top metrics row
+    y0 = pdf.get_y()
+    _draw_metric_card(pdf, 15, y0, 56, 22, "On Page 1 of Google", kw.get("top10", 0) or 0, (16, 185, 129), f"of {kw.get('total', 0)} total")
+    _draw_metric_card(pdf, 77, y0, 56, 22, "Monthly Clicks", kw.get("total_clicks", 0) or 0, (139, 92, 246),
+                      f"{kw.get('clicks_change', 0):+d}" if kw.get("clicks_change") else "")
+    _draw_metric_card(pdf, 139, y0, 56, 22, "Times Shown", kw.get("total_impressions", 0) or 0, (236, 72, 153),
+                      f"{kw.get('impressions_change', 0):+d}" if kw.get("impressions_change") else "")
+    pdf.set_y(y0 + 28)
+
+    # Ranking distribution
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(76, 29, 149)
+    pdf.cell(0, 7, "Ranking Positions", ln=True)
+    pdf.set_text_color(30, 30, 30)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, _safe(f"Top 3 spots: {kw.get('top3', 0)}   |   Top 10 (page 1): {kw.get('top10', 0)}   |   Top 20: {kw.get('top20', 0)}"), ln=True)
+    pdf.ln(4)
+
+    # Wins
+    rc = kw.get("ranking_changes", {}) or {}
+    improved = rc.get("improved", [])
+    declined = rc.get("declined", [])
+
+    if improved:
+        pdf.set_fill_color(236, 253, 245)
+        pdf.set_text_color(5, 150, 105)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 8, f"  Wins: {len(improved)} keywords moved UP", ln=True, fill=True)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_font("Helvetica", "", 9)
+        for c in improved[:8]:
+            pdf.cell(100, 5, _safe(f"  {c.get('query','')}", 50), ln=0)
+            pdf.cell(0, 5, _safe(f"#{c.get('previous','')} -> #{c.get('current','')}  (+{c.get('change','')})"), ln=True)
+        pdf.ln(3)
+
+    if declined:
+        pdf.set_fill_color(254, 242, 242)
+        pdf.set_text_color(185, 28, 28)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 8, f"  Watching: {len(declined)} keywords slipped", ln=True, fill=True)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_font("Helvetica", "", 9)
+        for c in declined[:6]:
+            pdf.cell(100, 5, _safe(f"  {c.get('query','')}", 50), ln=0)
+            pdf.cell(0, 5, _safe(f"#{c.get('previous','')} -> #{c.get('current','')}  ({c.get('change','')})"), ln=True)
+        pdf.ln(3)
+
+    # Top keywords (simplified)
+    top_kws = kw.get("top_keywords", []) or []
+    if top_kws:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(76, 29, 149)
+        pdf.cell(0, 7, "Top 10 Keywords Driving Traffic", ln=True)
+        pdf.set_text_color(30, 30, 30)
+        # Header row
+        pdf.set_fill_color(243, 244, 246)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(110, 7, "  Keyword", ln=0, fill=True)
+        pdf.cell(30, 7, "Position", ln=0, fill=True, align="C")
+        pdf.cell(40, 7, "Clicks/month", ln=True, fill=True, align="C")
+        pdf.set_font("Helvetica", "", 9)
+        for i, k in enumerate(top_kws[:10]):
+            if i % 2 == 0:
+                pdf.set_fill_color(250, 250, 252)
+                pdf.cell(180, 6, "", ln=0, fill=True)
+                pdf.set_x(15)
+            pdf.cell(110, 6, _safe(f"  {k.get('query','')}", 55), ln=0)
+            pdf.cell(30, 6, f"#{k.get('position','')}", ln=0, align="C")
+            pdf.cell(40, 6, str(k.get("clicks", 0)), ln=True, align="C")
+
+    # Tracked (Road to #1)
     if tracked:
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(70, 6, "Keyword", ln=False)
-        pdf.cell(20, 6, "Position", ln=False, align="R")
-        pdf.cell(20, 6, "Clicks", ln=False, align="R")
-        pdf.cell(25, 6, "Impressions", ln=False, align="R")
-        pdf.cell(20, 6, "Strategy", ln=False, align="R")
-        pdf.cell(35, 6, "Target URL", ln=True, align="R")
-        pdf.set_font("Helvetica", "", 8)
-        for tk in tracked:
-            pos = tk.get("position") or "N/R"
-            pdf.cell(70, 5, _safe(tk.get("keyword",""), 45), ln=False)
-            pdf.cell(20, 5, str(pos), ln=False, align="R")
-            pdf.cell(20, 5, str(tk.get("clicks", 0)), ln=False, align="R")
-            pdf.cell(25, 5, str(tk.get("impressions", 0)), ln=False, align="R")
-            pdf.cell(20, 5, "Yes" if tk.get("has_strategy") else "No", ln=False, align="R")
-            pdf.cell(35, 5, _safe(tk.get("target_url",""), 25), ln=True, align="R")
-    else:
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 7, "No primary keywords tracked yet.", ln=True)
-
-    # ─── Technical Work Completed ───
-    pdf.ln(8)
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_fill_color(240, 240, 250)
-    pdf.cell(0, 10, "  Technical SEO Work Completed", ln=True, fill=True)
-    pdf.ln(3)
-
-    if fixes.get("applied", 0) > 0 or fixes.get("pending", 0) > 0:
+        pdf.ln(4)
         pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, "Fix Summary:", ln=True)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(95, 7, f"Applied: {fixes.get('applied', 0)}", ln=False)
-        pdf.cell(95, 7, f"Pending Review: {fixes.get('pending', 0)}", ln=True)
-        pdf.cell(95, 7, f"Failed: {fixes.get('failed', 0)}", ln=False)
-        pdf.cell(95, 7, f"Rejected: {fixes.get('rejected', 0)}", ln=True)
-        pdf.cell(95, 7, f"Applied This Period: {fixes.get('applied_this_month', 0)}", ln=False)
-        pdf.cell(95, 7, f"Generated This Period: {fixes.get('generated_this_month', 0)}", ln=True)
+        pdf.set_text_color(76, 29, 149)
+        pdf.cell(0, 7, "Priority Keywords (Road to #1)", ln=True)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_fill_color(243, 244, 246)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(130, 7, "  Keyword", ln=0, fill=True)
+        pdf.cell(25, 7, "Current", ln=0, fill=True, align="C")
+        pdf.cell(25, 7, "Clicks", ln=True, fill=True, align="C")
+        pdf.set_font("Helvetica", "", 9)
+        for i, tk in enumerate(tracked[:12]):
+            if i % 2 == 0:
+                pdf.set_fill_color(250, 250, 252)
+                pdf.cell(180, 6, "", ln=0, fill=True)
+                pdf.set_x(15)
+            pos = tk.get("position")
+            pos_str = f"#{int(pos)}" if pos else "N/R"
+            pdf.cell(130, 6, _safe(f"  {tk.get('keyword','')}", 65), ln=0)
+            pdf.cell(25, 6, pos_str, ln=0, align="C")
+            pdf.cell(25, 6, str(tk.get("clicks", 0)), ln=True, align="C")
+
+    # ══════════════ PAGE 4: WORK COMPLETED ══════════════
+    pdf.add_page()
+    _draw_section_header(pdf, "What We Did This Period", "The work completed on your site behind the scenes.")
+
+    y0 = pdf.get_y()
+    _draw_metric_card(pdf, 15, y0, 56, 22, "Fixes Applied This Period", fixes.get("applied_this_month", 0) or 0, (16, 185, 129))
+    _draw_metric_card(pdf, 77, y0, 56, 22, "Fixes Applied All-Time", fixes.get("applied", 0) or 0, (139, 92, 246))
+    _draw_metric_card(pdf, 139, y0, 56, 22, "Pending Review", fixes.get("pending", 0) or 0, (245, 158, 11))
+    pdf.set_y(y0 + 28)
+
+    by_type = fixes.get("by_type", {}) or {}
+    if by_type:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(76, 29, 149)
+        pdf.cell(0, 7, "Types of Improvements Made", ln=True)
+        pdf.set_text_color(30, 30, 30)
+        type_labels = {
+            "alt_text": "Images given descriptive text (helps SEO + accessibility)",
+            "meta_title": "Page titles rewritten for Google",
+            "meta_description": "Search result previews improved",
+            "thin_content": "Pages with too little content expanded",
+            "structured_data": "Rich snippets added (star ratings, prices)",
+            "broken_link": "Broken links fixed",
+        }
+        for fix_type, count in sorted(by_type.items(), key=lambda x: -x[1]):
+            label = type_labels.get(fix_type, fix_type.replace("_", " ").title())
+            pdf.set_fill_color(250, 250, 252)
+            pdf.rect(15, pdf.get_y(), 180, 8, style="F")
+            pdf.set_fill_color(139, 92, 246)
+            pdf.rect(15, pdf.get_y(), 2, 8, style="F")
+            pdf.set_xy(20, pdf.get_y() + 1)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(15, 6, str(count), ln=0)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, _safe(label), ln=True)
+            pdf.ln(0.5)
         pdf.ln(3)
 
-        # By type
-        by_type = fixes.get("by_type", {})
-        if by_type:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, "Work Breakdown by Type (All Time Applied):", ln=True)
-            pdf.set_font("Helvetica", "", 10)
-            type_labels = {"alt_text": "Alt Text Added to Images", "meta_title": "Meta Titles Optimized",
-                          "meta_description": "Meta Descriptions Written", "thin_content": "Content Expanded",
-                          "structured_data": "Structured Data Added", "broken_link": "Broken Links Fixed"}
-            for fix_type, count in by_type.items():
-                label = type_labels.get(fix_type, fix_type.replace("_", " ").title())
-                pdf.cell(0, 6, f"  * {label}: {count} fixes applied", ln=True)
-            pdf.ln(2)
+    recent = fixes.get("recent_work", []) or []
+    if recent:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(76, 29, 149)
+        pdf.cell(0, 7, "Recent Fixes", ln=True)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_font("Helvetica", "", 8.5)
+        for w in recent[:10]:
+            pdf.cell(35, 5, _safe(w.get('applied_at', '')[:10]), ln=0)
+            pdf.cell(40, 5, _safe(w.get('type', '').replace('_', ' ').title(), 25), ln=0)
+            pdf.cell(0, 5, _safe(w.get('resource', ''), 80), ln=True)
 
-        # By resource
-        by_resource = fixes.get("by_resource", {})
-        if by_resource:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, "Resources Fixed:", ln=True)
-            pdf.set_font("Helvetica", "", 10)
-            for res_type, count in by_resource.items():
-                pdf.cell(0, 6, f"  * {count} {res_type}(s) optimized", ln=True)
-            pdf.ln(2)
+    # Inception / cumulative
+    if inception:
+        pdf.ln(4)
+        pdf.set_fill_color(245, 243, 255)
+        pdf.set_text_color(76, 29, 149)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 7, f"  Since we started working together ({_safe(inception.get('tracking_started',''))})", ln=True, fill=True)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_font("Helvetica", "", 9)
+        lines = [
+            f"Keywords grown: {inception.get('initial_keywords',0)} -> {kw.get('total',0) or 0} ({inception.get('keywords_growth',0):+d})",
+            f"Traffic grown: {inception.get('initial_clicks',0)} -> {kw.get('total_clicks',0) or 0} ({inception.get('clicks_growth',0):+d})",
+            f"Total audits run: {inception.get('total_audits',0)}    |    Total fixes applied: {inception.get('total_fixes_applied',0)}",
+        ]
+        for L in lines:
+            pdf.cell(5, 6, "", ln=0)
+            pdf.cell(0, 6, _safe(L), ln=True)
 
-        # Recent work
-        recent = fixes.get("recent_work", [])
-        if recent:
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(0, 7, "Recent Fixes Applied:", ln=True)
-            pdf.set_font("Helvetica", "", 8)
-            for w in recent[:15]:
-                pdf.cell(0, 5, f"  [{_safe(w.get('type',''))}] {_safe(w.get('resource',''), 60)} - {_safe(w.get('applied_at','')[:10])}", ln=True)
-    else:
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(0, 7, "No fixes have been applied yet. Run a scan to generate fix proposals.", ln=True)
-
-    # ─── AI Summary ───
-    ai_summary = data.get("ai_summary", "")
+    # ══════════════ PAGE 5: WHAT'S NEXT ══════════════
     if ai_summary:
         pdf.add_page()
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.set_fill_color(240, 240, 250)
-        pdf.cell(0, 10, "  AI Analysis & Strategic Assessment", ln=True, fill=True)
-        pdf.ln(3)
+        _draw_section_header(pdf, "What's Next", "Where we're focusing effort next.")
         pdf.set_font("Helvetica", "", 10)
-        # Split into paragraphs and write
+        pdf.set_text_color(30, 30, 30)
+        # Show full AI summary here (the condensed version was on page 2)
         for para in ai_summary.split("\n\n"):
-            if para.strip():
-                pdf.multi_cell(0, 5, _safe(para.strip(), 2000))
-                pdf.ln(3)
+            para = para.strip()
+            if not para:
+                continue
+            pdf.multi_cell(0, 5.5, _safe(para, 2000))
+            pdf.ln(2)
+
+    # Footer accent on last page
+    pdf.set_y(-20)
+    pdf.set_fill_color(139, 92, 246)
+    pdf.rect(0, pdf.get_y() + 12, 210, 2, style="F")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(156, 163, 175)
+    pdf.cell(0, 6, _safe(f"{domain}  -  SEO Report  -  {data.get('generated_at', '')[:10]}"), align="C")
 
     return pdf.output()
 

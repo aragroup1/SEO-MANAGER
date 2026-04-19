@@ -51,6 +51,8 @@ export default function RoadToOne({ websiteId }: { websiteId: number }) {
   const [cannibalization, setCannibalization] = useState<Cannibalization[]>([]);
   const [editingUrl, setEditingUrl] = useState<number | null>(null);
   const [urlInput, setUrlInput] = useState('');
+  const [refreshingLive, setRefreshingLive] = useState(false);
+  const [liveMessage, setLiveMessage] = useState<string | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -136,6 +138,30 @@ export default function RoadToOne({ websiteId }: { websiteId: number }) {
     } catch {}
   };
 
+  const refreshLiveRankings = async (force = false) => {
+    setRefreshingLive(true);
+    setLiveMessage(null);
+    try {
+      const r = await fetch(`${API_URL}/api/keywords/${websiteId}/refresh-live`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
+      const data = await r.json();
+      if (data.error) {
+        setLiveMessage(data.message || data.error);
+      } else {
+        setLiveMessage(`Updated ${data.updated} • cached ${data.skipped}`);
+        fetchTracked();
+      }
+    } catch (e: any) {
+      setLiveMessage('Failed to refresh');
+    } finally {
+      setRefreshingLive(false);
+      setTimeout(() => setLiveMessage(null), 6000);
+    }
+  };
+
   const removeKeyword = async (tkId: number) => {
     if (!confirm('Remove this keyword from tracking?')) return;
     try {
@@ -152,11 +178,23 @@ export default function RoadToOne({ websiteId }: { websiteId: number }) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-white flex items-center gap-3">
-          <Trophy className="w-6 h-6 text-yellow-400" /> Road to #1
-        </h2>
-        <p className="text-purple-300 mt-1 text-sm">Track primary keywords, analyze competitors, and execute your strategy to rank #1</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+            <Trophy className="w-6 h-6 text-yellow-400" /> Road to #1
+          </h2>
+          <p className="text-purple-300 mt-1 text-sm">Track primary keywords, analyze competitors, and execute your strategy to rank #1</p>
+        </div>
+        {tracked.length > 0 && (
+          <div className="flex items-center gap-2">
+            {liveMessage && <span className="text-xs text-purple-200 px-2 py-1 bg-white/5 rounded">{liveMessage}</span>}
+            <button onClick={() => refreshLiveRankings(true)} disabled={refreshingLive}
+              className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-200 px-3 py-2 rounded-lg text-xs font-medium hover:from-purple-500/30 hover:to-pink-500/30 transition-all border border-purple-500/30 flex items-center gap-2 disabled:opacity-50">
+              {refreshingLive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {refreshingLive ? 'Checking live SERPs...' : 'Refresh Live Rankings'}
+            </button>
+          </div>
+        )}
       </div>
 
       {tracked.length === 0 && (

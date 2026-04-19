@@ -20,8 +20,8 @@ DB: Railway PostgreSQL, auto-deploys from GitHub main branch.
 - Check for: syntax errors, missing imports, broken references, unintended side effects.
 - Read the surrounding code context first — don't edit blind.
 
-### Auto-Commit Workflow
-After every edit: `git add -A && git commit -m "<short description>" && git push`
+### Commit + Push Workflow
+- **Batch all changes across a full turn before pushing.** Do NOT commit-and-push after each individual edit. Wait until every change the user asked for in the current turn is complete, then do ONE `git add -A && git commit -m "<short>" && git push` at the very end.
 - Keep commit messages short: "fix shopify token refresh" not "Updated integrations.py to improve the Shopify token refresh mechanism"
 - Group related changes into one commit.
 
