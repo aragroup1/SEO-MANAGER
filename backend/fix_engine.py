@@ -1140,6 +1140,10 @@ async def _refresh_shopify_token(db, integration) -> str:
                     config["token_obtained_at"] = datetime.utcnow().isoformat()
                     config["token_expires_in"] = token_data.get("expires_in", 86399)
                     integration.config = config
+                    # Propagate to Website record so apply_approved_fix doesn't use stale token
+                    website = db.query(Website).filter(Website.id == integration.website_id).first()
+                    if website:
+                        website.shopify_access_token = new_token
                     db.commit()
                     print(f"[Shopify] Token refreshed for {shop_domain}")
                     return new_token
@@ -1262,20 +1266,20 @@ async def apply_approved_fix(fix_id: int) -> Dict[str, Any]:
             store_url = website.shopify_store_url or website.domain
             access_token = website.shopify_access_token
 
-            if not access_token:
-                integration = db.query(Integration).filter(
-                    Integration.website_id == website.id,
-                    Integration.integration_type == "shopify",
-                    Integration.status == "active"
-                ).first()
-                if integration:
-                    access_token = integration.access_token
-                    config = integration.config or {}
-                    store_url = config.get("store_url", store_url)
-
-                    # Auto-refresh token if using client_credentials flow
-                    if config.get("auth_method") == "client_credentials" and config.get("client_id"):
-                        access_token = await _refresh_shopify_token(db, integration)
+            # Always prefer the Integration record — the token there is refreshed; the
+            # Website record's copy can be stale after the 24h client_credentials expiry.
+            integration = db.query(Integration).filter(
+                Integration.website_id == website.id,
+                Integration.integration_type == "shopify",
+                Integration.status == "active"
+            ).first()
+            if integration:
+                config = integration.config or {}
+                store_url = config.get("store_url", store_url)
+                if config.get("auth_method") == "client_credentials" and config.get("client_id") and config.get("client_secret"):
+                    access_token = await _refresh_shopify_token(db, integration)
+                else:
+                    access_token = integration.access_token or access_token
 
             if not access_token:
                 fix.status = "failed"
