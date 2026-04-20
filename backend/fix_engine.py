@@ -879,7 +879,13 @@ class WordPressFixEngine:
     # ─── Apply fixes via WP REST API (with XML-RPC fallback) ───
 
     async def _api_put(self, endpoint: str, data: Dict) -> Optional[Any]:
-        """Try REST API first, fall back to XML-RPC if blocked by security plugin."""
+        """Try REST API first, fall back to XML-RPC if blocked by security plugin or user role."""
+        # Guard: empty resource ID means POST would create a new post instead of editing
+        parts = endpoint.split("/")
+        if len(parts) < 2 or not parts[1]:
+            print(f"[WP API] Refusing update with empty resource id: '{endpoint}'")
+            return None
+
         # Try REST API
         try:
             async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
@@ -889,9 +895,10 @@ class WordPressFixEngine:
                 error_msg = resp.text[:200]
                 print(f"[WP API] REST PUT {endpoint} failed: {resp.status_code} {error_msg}")
 
-                # If REST API blocked (401/403 with rest_cannot_edit), try XML-RPC
-                if resp.status_code in [401, 403] and "rest_cannot_edit" in error_msg:
-                    print(f"[WP API] REST blocked by security plugin, trying XML-RPC...")
+                # Fall back to XML-RPC on any auth/permission failure (rest_cannot_edit,
+                # rest_cannot_create, rest_forbidden, rest_not_logged_in, or bare 401/403).
+                if resp.status_code in [401, 403]:
+                    print(f"[WP API] REST write blocked ({resp.status_code}), trying XML-RPC...")
                     return await self._xmlrpc_edit(endpoint, data)
         except Exception as e:
             print(f"[WP API] REST PUT {endpoint} error: {e}")
@@ -986,7 +993,9 @@ class WordPressFixEngine:
             return False, str(e)
 
     async def _apply_wp_alt_text(self, fix: ProposedFix) -> Tuple[bool, str]:
-        resource_id = fix.resource_id
+        resource_id = (fix.resource_id or "").strip()
+        if not resource_id:
+            return False, "Fix is missing WordPress post/page ID — regenerate this fix"
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
 
         # Get content via XML-RPC first (returns raw content), fall back to REST
@@ -1036,12 +1045,23 @@ class WordPressFixEngine:
 
     async def _apply_wp_meta_title(self, fix: ProposedFix) -> Tuple[bool, str]:
         """Update meta title via Yoast SEO or RankMath post meta, or fall back to post title."""
-        resource_id = fix.resource_id
+        resource_id = (fix.resource_id or "").strip()
+        if not resource_id:
+            return False, "Fix is missing WordPress post/page ID — regenerate this fix"
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
 
+        # Strip any HTML from the proposed title (safety — title must be plain text)
+        proposed = fix.proposed_value or ""
+        if "<" in proposed and ">" in proposed:
+            from bs4 import BeautifulSoup
+            proposed = BeautifulSoup(proposed, "html.parser").get_text(" ", strip=True)
+        proposed = proposed.strip()[:200]
+        if not proposed:
+            return False, "Proposed title is empty after cleanup"
+
         # Try updating the post title directly (works without SEO plugins)
-        print(f"[WP Fix] Applying meta title fix to {endpoint}: '{fix.proposed_value}'")
-        result = await self._api_put(endpoint, {"title": fix.proposed_value})
+        print(f"[WP Fix] Applying meta title fix to {endpoint}: '{proposed}'")
+        result = await self._api_put(endpoint, {"title": proposed})
         if result:
             return True, "Title updated in WordPress"
 
@@ -1089,7 +1109,9 @@ class WordPressFixEngine:
         return None
 
     async def _apply_wp_excerpt(self, fix: ProposedFix) -> Tuple[bool, str]:
-        resource_id = fix.resource_id
+        resource_id = (fix.resource_id or "").strip()
+        if not resource_id:
+            return False, "Fix is missing WordPress post/page ID — regenerate this fix"
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
         print(f"[WP Fix] Applying excerpt fix to {endpoint}")
         result = await self._api_put(endpoint, {"excerpt": fix.proposed_value})
@@ -1098,7 +1120,9 @@ class WordPressFixEngine:
         return False, "WordPress API rejected the update"
 
     async def _apply_wp_content(self, fix: ProposedFix) -> Tuple[bool, str]:
-        resource_id = fix.resource_id
+        resource_id = (fix.resource_id or "").strip()
+        if not resource_id:
+            return False, "Fix is missing WordPress post/page ID — regenerate this fix"
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
         print(f"[WP Fix] Applying content fix to {endpoint}")
         result = await self._api_put(endpoint, {"content": fix.proposed_value})
