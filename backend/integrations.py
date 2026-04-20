@@ -527,13 +527,17 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
                     xmlrpc_ok = False
                     try:
                         xmlrpc_url = f"{wp_url}/xmlrpc.php"
+                        # Escape XML special chars in credentials (avoids "not well formed" faults)
+                        from xml.sax.saxutils import escape as _xml_escape
+                        u_esc = _xml_escape(wp_username)
+                        p_esc = _xml_escape(wp_app_password)
                         # Test with wp.getUsersBlogs (lightweight read that confirms XML-RPC auth works)
                         xml_test = f"""<?xml version="1.0"?>
 <methodCall>
   <methodName>wp.getUsersBlogs</methodName>
   <params>
-    <param><value><string>{wp_username}</string></value></param>
-    <param><value><string>{wp_app_password}</string></value></param>
+    <param><value><string>{u_esc}</string></value></param>
+    <param><value><string>{p_esc}</string></value></param>
   </params>
 </methodCall>"""
                         xmlrpc_resp = await test_client.post(xmlrpc_url, content=xml_test.encode(),
@@ -566,8 +570,12 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
 
                     # Neither REST write nor XML-RPC auth works — refuse to save a broken integration
                     print(f"[WordPress] Connection REJECTED: REST write failed ({write_msg}) AND XML-RPC failed ({xmlrpc_fault})")
+                    rest_lower = (write_msg or "").lower()
+                    # REST authenticated but user lacks edit capability -> role issue, not credentials
+                    if "not allowed" in rest_lower or "rest_cannot_edit" in rest_lower or "rest_forbidden" in rest_lower:
+                        return {"connected": False, "message": f"The WordPress user '{wp_username}' is logged in, but does NOT have permission to edit posts. Fix: in WP Admin -> Users -> {wp_username} -> set Role to 'Administrator' (or 'Editor'). Then regenerate the application password and reconnect. (REST said: '{write_msg}'. XML-RPC: {xmlrpc_fault}.)"}
                     if xmlrpc_fault and ("username" in xmlrpc_fault.lower() or "password" in xmlrpc_fault.lower() or "incorrect" in xmlrpc_fault.lower()):
-                        return {"connected": False, "message": f"WordPress credentials rejected. XML-RPC says: '{xmlrpc_fault}'. Verify the username is an admin, and the application password is freshly generated (Users → Profile → Application Passwords). Paste it with or without spaces — we strip them."}
+                        return {"connected": False, "message": f"WordPress credentials rejected. XML-RPC says: '{xmlrpc_fault}'. Verify the username is an admin, and the application password is freshly generated (Users -> Profile -> Application Passwords). Paste it with or without spaces - we strip them."}
                     return {"connected": False, "message": f"Cannot write to WordPress. REST API: {write_msg}. XML-RPC: {xmlrpc_fault}. Either whitelist /wp-json/ in your security plugin, or enable XML-RPC and verify the application password."}
 
         except Exception as e:
