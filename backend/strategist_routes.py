@@ -27,7 +27,7 @@ async def get_saved(website_id: int, db: Session = Depends(get_db)):
 
     row = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
     if not row:
-        return {"strategy": None, "weekly_plan": None, "portfolio": None}
+        return {"strategy": None, "weekly_plan": None, "portfolio": None, "linking": None, "decay": None}
 
     return {
         "strategy": row.strategy,
@@ -36,6 +36,10 @@ async def get_saved(website_id: int, db: Session = Depends(get_db)):
         "weekly_generated_at": row.weekly_generated_at.isoformat() if row.weekly_generated_at else None,
         "portfolio": row.portfolio,
         "portfolio_generated_at": row.portfolio_generated_at.isoformat() if row.portfolio_generated_at else None,
+        "linking": row.linking,
+        "linking_generated_at": row.linking_generated_at.isoformat() if row.linking_generated_at else None,
+        "decay": row.decay,
+        "decay_generated_at": row.decay_generated_at.isoformat() if row.decay_generated_at else None,
     }
 
 

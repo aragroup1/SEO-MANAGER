@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from database import (
     SessionLocal, Website, AuditReport, KeywordSnapshot,
-    TrackedKeyword, Integration, ProposedFix
+    TrackedKeyword, Integration, ProposedFix, StrategistResult
 )
 
 load_dotenv()
@@ -172,6 +172,40 @@ def _build_full_intelligence(website_id: int, db: Session) -> Dict[str, Any]:
 
     intel["fixes"] = {**fix_counts, "by_type": fix_types}
 
+    # ─── Hub & Spoke / Content Decay (last saved analysis) ───
+    sr = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+    if sr and sr.linking:
+        L = sr.linking
+        intel["linking"] = {
+            "analyzed_at": sr.linking_generated_at.isoformat() if sr.linking_generated_at else None,
+            "total_pages": L.get("total_pages", 0),
+            "total_internal_links": L.get("total_internal_links", 0),
+            "avg_links_per_page": L.get("avg_links_per_page", 0),
+            "hubs": [{"url": h.get("url"), "inbound": h.get("inbound", 0)} for h in (L.get("hubs") or [])[:8]],
+            "orphans": [{"url": o.get("url"), "inbound": o.get("inbound", 0)} for o in (L.get("orphans") or [])[:10]],
+            "top_suggestions": [
+                {"from": s.get("from_url"), "to": s.get("to_url"), "anchor": s.get("anchor_text"), "reason": s.get("reason")}
+                for s in (L.get("suggestions") or [])[:8]
+            ],
+        }
+    else:
+        intel["linking"] = None
+
+    if sr and sr.decay:
+        D = sr.decay
+        intel["decay"] = {
+            "analyzed_at": sr.decay_generated_at.isoformat() if sr.decay_generated_at else None,
+            "total_pages_analyzed": D.get("total_pages_analyzed", 0),
+            "high_risk_count": len(D.get("high_risk") or []),
+            "medium_risk_count": len(D.get("medium_risk") or []),
+            "high_risk_samples": [
+                {"url": i.get("url"), "days": i.get("days_since_update"), "rec": i.get("recommendation")}
+                for i in (D.get("high_risk") or [])[:6]
+            ],
+        }
+    else:
+        intel["decay"] = None
+
     # ─── Integrations ───
     integrations = db.query(Integration).filter(
         Integration.website_id == website_id, Integration.status == "active"
@@ -248,6 +282,37 @@ ORGANIC SEARCH PERFORMANCE ({kw['date_from']} to {kw['date_to']}):
 TECHNICAL WORK:
   Applied: {fixes.get('applied',0)} | Pending: {fixes.get('pending',0)} | Failed: {fixes.get('failed',0)}
   By type: {', '.join([f'{t}: {c}' for t,c in fixes.get('by_type',{}).items()]) if fixes.get('by_type') else 'None'}""")
+
+    linking = intel.get("linking")
+    if linking:
+        parts.append(f"""
+HUB & SPOKE INTERNAL LINKING (analyzed {linking.get('analyzed_at','')[:10]}):
+  Pages: {linking['total_pages']} | Internal links: {linking['total_internal_links']} | Avg links/page: {linking['avg_links_per_page']}
+  Hubs: {len(linking.get('hubs', []))} | Orphans: {len(linking.get('orphans', []))}""")
+        if linking.get("hubs"):
+            parts.append("  TOP HUB PAGES (strong authority — link from these to priority pages):")
+            for h in linking["hubs"][:5]:
+                parts.append(f"    {h['url']} ({h['inbound']} inbound)")
+        if linking.get("orphans"):
+            parts.append("  ORPHAN PAGES (need internal links pointing to them):")
+            for o in linking["orphans"][:5]:
+                parts.append(f"    {o['url']} ({o['inbound']} inbound)")
+        if linking.get("top_suggestions"):
+            parts.append("  SUGGESTED LINKS (from AI linking engine):")
+            for s in linking["top_suggestions"][:5]:
+                parts.append(f"    {s['from']} → {s['to']} anchor=\"{s['anchor']}\" ({s['reason']})")
+    else:
+        parts.append("\nHUB & SPOKE: not yet analyzed — run the Hub & Spoke audit for linking intelligence.")
+
+    decay = intel.get("decay")
+    if decay:
+        parts.append(f"""
+CONTENT DECAY (analyzed {decay.get('analyzed_at','')[:10]}):
+  Pages analyzed: {decay['total_pages_analyzed']} | High risk: {decay['high_risk_count']} | Medium: {decay['medium_risk_count']}""")
+        if decay.get("high_risk_samples"):
+            parts.append("  HIGH-RISK STALE PAGES:")
+            for s in decay["high_risk_samples"][:5]:
+                parts.append(f"    {s['url']} — {s['days']}d old → {s['rec']}")
 
     services = intel.get("connected_services", [])
     parts.append(f"\nCONNECTED: {', '.join(services) if services else 'None'}")

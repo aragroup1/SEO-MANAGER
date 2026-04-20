@@ -52,6 +52,22 @@ export default function CompetitorAnalysis({ websiteId }: { websiteId: number })
 
   const API = process.env.NEXT_PUBLIC_API_URL || '';
 
+  useEffect(() => {
+    setLinkingData(null); setDecayData(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${API}/api/strategist/${websiteId}/saved`);
+        if (!r.ok || cancelled) return;
+        const d = await r.json();
+        if (cancelled) return;
+        if (d.linking) setLinkingData(d.linking);
+        if (d.decay) setDecayData(d.decay);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [websiteId, API]);
+
   const runLinking = async () => {
     setLinkingLoading(true); setLinkingData(null);
     try {

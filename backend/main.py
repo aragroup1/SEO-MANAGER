@@ -639,8 +639,57 @@ async def analyze_linking(website_id: int, background_tasks: BackgroundTasks, db
         raise HTTPException(status_code=404, detail="Website not found")
 
     from linking_engine import analyze_internal_linking
-    result = await analyze_internal_linking(website_id)
-    return result
+    raw = await analyze_internal_linking(website_id)
+    if isinstance(raw, dict) and not raw.get("error"):
+        domain = raw.get("domain", "")
+        def _abs(path: str) -> str:
+            if not path: return ""
+            if path.startswith("http"): return path
+            return f"https://{domain}{path}" if domain else path
+        hubs = [{
+            "url": _abs(h.get("path", "")),
+            "title": h.get("path", ""),
+            "inbound": h.get("inbound_links", 0),
+            "outbound": 0,
+            "is_hub": True, "is_orphan": False,
+        } for h in raw.get("hub_pages", [])]
+        orphans = [{
+            "url": _abs(o.get("path", "")),
+            "title": o.get("title", ""),
+            "inbound": o.get("inbound", 0),
+            "outbound": 0,
+            "is_hub": False, "is_orphan": True,
+        } for o in raw.get("orphan_pages", [])]
+        suggestions = [{
+            "from_url": _abs(s.get("source_page", "")),
+            "to_url": _abs(s.get("target_page", "")),
+            "anchor_text": s.get("anchor_text", ""),
+            "reason": s.get("reason", ""),
+        } for s in raw.get("link_suggestions", [])]
+        result = {
+            "total_pages": raw.get("pages_analyzed", 0),
+            "total_internal_links": raw.get("total_internal_links", 0),
+            "avg_links_per_page": raw.get("avg_internal_links", 0),
+            "hubs": hubs,
+            "orphans": orphans,
+            "suggestions": suggestions,
+            "analyzed_at": raw.get("analyzed_at"),
+        }
+        try:
+            from database import StrategistResult
+            from datetime import datetime as _dt
+            row = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+            if not row:
+                row = StrategistResult(website_id=website_id)
+                db.add(row); db.flush()
+            row.linking = result
+            row.linking_generated_at = _dt.utcnow()
+            db.commit()
+        except Exception as e:
+            print(f"[Linking] persist failed: {e}")
+            db.rollback()
+        return result
+    return raw
 
 
 # Content Decay Detection
@@ -652,8 +701,79 @@ async def analyze_decay(website_id: int, background_tasks: BackgroundTasks, db: 
         raise HTTPException(status_code=404, detail="Website not found")
 
     from content_decay import detect_content_decay
-    result = await detect_content_decay(website_id)
-    return result
+    raw = await detect_content_decay(website_id)
+    if isinstance(raw, dict) and not raw.get("error"):
+        def _bucket(score):
+            if score < 40: return "high"
+            if score < 65: return "medium"
+            return "low"
+        from datetime import datetime as _dt2
+        def _days_since(signals):
+            for k in ("modified_date", "schema_date_modified", "last_modified", "published_date", "schema_date_published"):
+                v = signals.get(k) if signals else None
+                if not v: continue
+                try:
+                    dt = _dt2.fromisoformat(str(v).replace("Z", "+00:00").split("+")[0])
+                    return max(0, (_dt2.utcnow() - dt).days)
+                except: pass
+            return 0
+        items = []
+        for p in raw.get("own_pages", []):
+            score = p.get("freshness_score", 50)
+            signals = p.get("signals", {}) or {}
+            last_mod = (signals.get("modified_date") or signals.get("schema_date_modified")
+                        or signals.get("last_modified") or signals.get("published_date") or "")
+            days = _days_since(signals)
+            items.append({
+                "url": p.get("url", ""),
+                "title": p.get("title", ""),
+                "last_modified": last_mod,
+                "days_since_update": days,
+                "decay_risk": _bucket(score),
+                "recommendation": (
+                    "Refresh content — very stale" if score < 40 else
+                    "Consider updating soon" if score < 65 else
+                    "Fresh enough — monitor"
+                ),
+            })
+        comp_map = {c.get("our_page", ""): c for c in raw.get("competitor_comparison", [])}
+        for it in items:
+            c = comp_map.get(it["url"])
+            if c:
+                it["current_position"] = c.get("position")
+                it["competitor_freshness"] = (
+                    f"Gap {c.get('freshness_gap', 0):+d} vs top competitor"
+                )
+        high = [i for i in items if i["decay_risk"] == "high"]
+        med = [i for i in items if i["decay_risk"] == "medium"]
+        low = [i for i in items if i["decay_risk"] == "low"]
+        result = {
+            "total_pages_analyzed": raw.get("pages_checked", len(items)),
+            "high_risk": high,
+            "medium_risk": med,
+            "low_risk": low,
+            "refresh_recommendations": [
+                (r if isinstance(r, str) else
+                 f"[{r.get('priority','med').upper()}] {r.get('action','')} — {r.get('reason','')}".strip(" —"))
+                for r in (raw.get("recommendations") or [])
+            ],
+            "analyzed_at": raw.get("analyzed_at"),
+        }
+        try:
+            from database import StrategistResult
+            from datetime import datetime as _dt
+            row = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+            if not row:
+                row = StrategistResult(website_id=website_id)
+                db.add(row); db.flush()
+            row.decay = result
+            row.decay_generated_at = _dt.utcnow()
+            db.commit()
+        except Exception as e:
+            print(f"[Decay] persist failed: {e}")
+            db.rollback()
+        return result
+    return raw
 
 
 # GA4 Traffic Data
@@ -904,6 +1024,10 @@ async def startup_event():
                     updated_at TIMESTAMP DEFAULT NOW()
                 )""",
                 "CREATE INDEX IF NOT EXISTS idx_strat_wid ON strategist_results(website_id)",
+                "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS linking JSON",
+                "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS linking_generated_at TIMESTAMP",
+                "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS decay JSON",
+                "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS decay_generated_at TIMESTAMP",
             ]
             for migration in migrations:
                 try:
