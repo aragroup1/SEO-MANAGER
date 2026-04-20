@@ -415,6 +415,18 @@ async def refresh_live_rankings(website_id: int, request: Request, db: Session =
                     tk.ranking_url = None
                 tk.updated_at = datetime.utcnow()
                 updated_count += 1
+
+                # Append to persistent history (never deleted on untrack)
+                from database import SerpRankingHistory
+                db.add(SerpRankingHistory(
+                    website_id=website_id,
+                    keyword=tk.keyword,
+                    position=float(found_pos) if found_pos else None,
+                    ranking_url=found_url,
+                    country=country,
+                    source="serper",
+                ))
+
                 results.append({"id": tk.id, "keyword": tk.keyword, "status": "updated", "position": found_pos, "url": found_url})
                 print(f"[Serper] {tk.keyword}: #{found_pos or 'N/R'} -> {found_url or '-'}")
             except Exception as e:
@@ -431,14 +443,130 @@ async def refresh_live_rankings(website_id: int, request: Request, db: Session =
     }
 
 
+# ─── SERP History (persistent Serper.dev rankings over time) ───
+
+@router.get("/{website_id}/serp-history")
+async def get_serp_history(website_id: int, keyword: str, days: int = 90, db: Session = Depends(get_db)):
+    """Persistent SERP history for a keyword (from Serper.dev polls)."""
+    from datetime import timedelta
+    from database import SerpRankingHistory
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = db.query(SerpRankingHistory).filter(
+        SerpRankingHistory.website_id == website_id,
+        SerpRankingHistory.keyword == keyword.strip().lower(),
+        SerpRankingHistory.checked_at >= cutoff,
+    ).order_by(SerpRankingHistory.checked_at.asc()).all()
+    return {
+        "keyword": keyword,
+        "history": [
+            {
+                "date": r.checked_at.isoformat(),
+                "position": r.position,
+                "url": r.ranking_url,
+                "country": r.country,
+                "source": r.source,
+            } for r in rows
+        ]
+    }
+
+
+@router.post("/{website_id}/check-serp")
+async def check_serp_for_keywords(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Check Serper.dev SERP positions for any list of keyword strings (not just tracked).
+    Always writes to SerpRankingHistory — data is permanent."""
+    import httpx
+    from database import SerpRankingHistory
+
+    SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+    if not SERPER_API_KEY:
+        return {"error": "SERPER_API_KEY not configured"}
+
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    body = await request.json()
+    keywords = [k.strip() for k in body.get("keywords", []) if k and k.strip()]
+    country = (body.get("country") or "gb").lower()
+    if not keywords:
+        return {"checked": 0, "results": []}
+
+    domain = (website.domain or "").lower().replace("https://", "").replace("http://", "").rstrip("/")
+    results = []
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        for kw in keywords[:50]:  # cap to control cost
+            try:
+                resp = await client.post(
+                    "https://google.serper.dev/search",
+                    headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+                    json={"q": kw, "gl": country, "num": 100}
+                )
+                if resp.status_code != 200:
+                    results.append({"keyword": kw, "status": "error", "message": f"HTTP {resp.status_code}"})
+                    continue
+                organic = resp.json().get("organic", [])
+                found_pos = None
+                found_url = None
+                for item in organic:
+                    link = (item.get("link") or "").lower()
+                    if domain and domain in link:
+                        found_pos = item.get("position")
+                        found_url = item.get("link")
+                        break
+                db.add(SerpRankingHistory(
+                    website_id=website_id,
+                    keyword=kw.lower(),
+                    position=float(found_pos) if found_pos else None,
+                    ranking_url=found_url,
+                    country=country,
+                    source="serper",
+                ))
+                results.append({"keyword": kw, "position": found_pos, "url": found_url, "status": "checked"})
+                print(f"[Serper] {kw}: #{found_pos or 'N/R'}")
+            except Exception as e:
+                results.append({"keyword": kw, "status": "error", "message": str(e)})
+
+    db.commit()
+    return {"checked": len(results), "source": "serper", "results": results}
+
+
+# ─── Stored Volumes (read all persisted volumes for a site) ───
+
+@router.get("/{website_id}/stored-volumes")
+async def get_stored_volumes(website_id: int, country: str = "GB", db: Session = Depends(get_db)):
+    """Return every persisted volume row for this site — historical data, never deleted."""
+    from database import KeywordVolume
+    rows = db.query(KeywordVolume).filter(
+        KeywordVolume.website_id == website_id,
+        KeywordVolume.country == country,
+    ).order_by(KeywordVolume.year_month.desc(), KeywordVolume.keyword.asc()).all()
+    return {
+        "country": country,
+        "total": len(rows),
+        "volumes": [
+            {
+                "keyword": r.keyword,
+                "year_month": r.year_month,
+                "search_volume": r.search_volume,
+                "competition": r.competition,
+                "cpc": r.cpc,
+                "fetched_at": r.fetched_at.isoformat() if r.fetched_at else None,
+            } for r in rows
+        ]
+    }
+
+
 # ─── Search Volume Lookup (DataForSEO) with Daily Cache ───
 
 @router.post("/{website_id}/search-volumes")
 async def get_search_volumes(website_id: int, request: Request, db: Session = Depends(get_db)):
-    """Fetch search volumes with MONTHLY caching to control DataForSEO costs.
-    Only calls DataForSEO API once per month per website. Cached in database."""
+    """Fetch search volumes with persistent monthly storage (KeywordVolume table).
+    Only calls DataForSEO once per month per (keyword, country). All historical
+    volumes are kept forever — never overwritten or deleted."""
     import base64
     from datetime import date
+    from database import KeywordVolume
 
     data = await request.json()
     keywords = data.get("keywords", [])
@@ -447,35 +575,26 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
     if not keywords:
         return {"volumes": {}, "source": "none"}
 
-    # ─── Check cache first (monthly) ───
-    website = db.query(Website).filter(Website.id == website_id).first()
-    if website:
-        from database import KeywordSnapshot
-        latest = db.query(KeywordSnapshot).filter(
-            KeywordSnapshot.website_id == website_id
-        ).order_by(KeywordSnapshot.snapshot_date.desc()).first()
+    current_month = str(date.today())[:7]
+    kw_lower = [k.strip().lower() for k in keywords if k and k.strip()]
 
-        if latest:
-            cached = latest.keyword_data
-            if isinstance(cached, list) and cached and cached[0].get("_volume_cache_date"):
-                cache_date = cached[0].get("_volume_cache_date", "")
-                # Monthly cache: check if same year-month
-                today = date.today()
-                cache_month = cache_date[:7] if len(cache_date) >= 7 else ""
-                current_month = str(today)[:7]
-                if cache_month == current_month:
-                    # Return cached volumes
-                    volumes = {}
-                    for kw in cached:
-                        if kw.get("_sv") is not None:
-                            volumes[kw["query"].lower()] = {
-                                "search_volume": kw.get("_sv", 0),
-                                "competition": kw.get("_comp", 0),
-                                "cpc": kw.get("_cpc", 0),
-                            }
-                    if volumes:
-                        print(f"[DataForSEO] Returning monthly cached volumes ({len(volumes)} keywords, cached {cache_date})")
-                        return {"volumes": volumes, "source": "dataforseo_cached", "total": len(volumes), "cached_date": cache_date}
+    # ─── Read persistent store first ───
+    existing = db.query(KeywordVolume).filter(
+        KeywordVolume.website_id == website_id,
+        KeywordVolume.country == country,
+        KeywordVolume.year_month == current_month,
+        KeywordVolume.keyword.in_(kw_lower),
+    ).all()
+    volumes = {
+        v.keyword: {"search_volume": v.search_volume, "competition": v.competition, "cpc": v.cpc}
+        for v in existing
+    }
+    missing = [k for k in kw_lower if k not in volumes]
+
+    # If everything's already stored for this month, return early.
+    if not missing:
+        print(f"[Volumes] All {len(volumes)} keywords already stored for {current_month}")
+        return {"volumes": volumes, "source": "stored", "total": len(volumes), "cached_month": current_month}
 
     DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN", "")
     DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD", "")
@@ -489,8 +608,8 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
     }
     location_code = location_map.get(country, 2826)
 
-    # Limit to 100 keywords per request to control costs
-    kw_batch = [k.strip() for k in keywords[:100] if k.strip()]
+    # Only fetch what we don't already have stored for this month (cap at 100)
+    kw_batch = missing[:100]
 
     try:
         auth = base64.b64encode(f"{DATAFORSEO_LOGIN}:{DATAFORSEO_PASSWORD}".encode()).decode()
@@ -524,7 +643,7 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
 
                 results = tasks[0].get("result", []) if tasks else []
 
-                volumes = {}
+                fresh = {}
                 for r in results:
                     if r and r.get("keyword"):
                         try:
@@ -533,39 +652,35 @@ async def get_search_volumes(website_id: int, request: Request, db: Session = De
                         except (ValueError, TypeError):
                             comp = 0
                             cpc = 0
-                        volumes[r["keyword"].lower()] = {
+                        fresh[r["keyword"].lower()] = {
                             "search_volume": r.get("search_volume") or 0,
                             "competition": round(comp * 100),
                             "cpc": round(cpc, 2),
                         }
 
-                print(f"[DataForSEO] Got volumes for {len(volumes)}/{len(kw_batch)} keywords")
+                print(f"[DataForSEO] Got volumes for {len(fresh)}/{len(kw_batch)} keywords")
 
-                # ─── Save to monthly cache ───
+                # ─── Persist to KeywordVolume table (one row per kw per month) ───
                 try:
-                    from database import KeywordSnapshot
-                    latest = db.query(KeywordSnapshot).filter(
-                        KeywordSnapshot.website_id == website_id
-                    ).order_by(KeywordSnapshot.snapshot_date.desc()).first()
-                    if latest and latest.keyword_data:
-                        updated_kw = []
-                        for kw in latest.keyword_data:
-                            q = kw.get("query", "").lower()
-                            if q in volumes:
-                                kw["_sv"] = volumes[q]["search_volume"]
-                                kw["_comp"] = volumes[q]["competition"]
-                                kw["_cpc"] = volumes[q]["cpc"]
-                            kw["_volume_cache_date"] = str(date.today())
-                            updated_kw.append(kw)
-                        latest.keyword_data = updated_kw
-                        from sqlalchemy.orm.attributes import flag_modified
-                        flag_modified(latest, "keyword_data")
-                        db.commit()
-                        print(f"[DataForSEO] Cached volumes for this month")
-                except Exception as cache_err:
-                    print(f"[DataForSEO] Cache save error (non-fatal): {cache_err}")
+                    for kw_lc, v in fresh.items():
+                        db.add(KeywordVolume(
+                            website_id=website_id,
+                            keyword=kw_lc,
+                            country=country,
+                            year_month=current_month,
+                            search_volume=v["search_volume"],
+                            competition=v["competition"],
+                            cpc=v["cpc"],
+                            source="dataforseo",
+                        ))
+                    db.commit()
+                    print(f"[DataForSEO] Persisted {len(fresh)} volumes for {current_month}")
+                except Exception as save_err:
+                    db.rollback()
+                    print(f"[DataForSEO] Persist error (non-fatal): {save_err}")
 
-                return {"volumes": volumes, "source": "dataforseo", "total": len(volumes)}
+                volumes.update(fresh)
+                return {"volumes": volumes, "source": "dataforseo", "total": len(volumes), "fetched": len(fresh), "from_store": len(volumes) - len(fresh)}
             elif resp.status_code == 401:
                 print(f"[DataForSEO] Auth failed (401). Check login email and API password (not account password).")
                 return {"volumes": {}, "source": "error", "message": "DataForSEO authentication failed. Use your API password from dataforseo.com/account, not your login password."}

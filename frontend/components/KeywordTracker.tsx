@@ -105,6 +105,10 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [volumeSource, setVolumeSource] = useState<string>('');
   const [loadingVolumes, setLoadingVolumes] = useState(false);
 
+  // Serper.dev live SERP check
+  const [checkingSerp, setCheckingSerp] = useState(false);
+  const [serpResult, setSerpResult] = useState<string>('');
+
   const snapshotIdAtSync = useRef<number | null>(null);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -251,6 +255,38 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   };
 
   const isTracked = (q: string) => trackedKeywords.some(t => t.keyword === q.toLowerCase());
+
+  // Trigger Serper.dev live SERP check for top visible keywords (persisted forever)
+  const checkLiveSerps = async () => {
+    if (!snapshot?.keywords?.length) return;
+    setCheckingSerp(true);
+    setSerpResult('');
+    try {
+      // Prefer tracked keywords; fall back to top 25 by clicks
+      const targets = trackedKeywords.length
+        ? trackedKeywords.map(t => t.keyword)
+        : snapshot.keywords.slice(0, 25).map(k => k.query);
+      const r = await fetch(`${API_URL}/api/keywords/${websiteId}/check-serp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keywords: targets, country: 'gb' })
+      });
+      if (r.ok) {
+        const data = await r.json();
+        const ranked = (data.results || []).filter((x: any) => x.position).length;
+        setSerpResult(`Checked ${data.checked} · ${ranked} ranking`);
+        // Refresh tracked to pick up updated positions
+        const tr = await fetch(`${API_URL}/api/keywords/${websiteId}/tracked`);
+        if (tr.ok) { const d = await tr.json(); setTrackedKeywords(d.tracked || []); }
+      } else {
+        setSerpResult('SERP check failed');
+      }
+    } catch {
+      setSerpResult('Connection error');
+    } finally {
+      setCheckingSerp(false);
+    }
+  };
 
   // Reset keyword data (clear wrong property)
   const resetKeywordData = async () => {
@@ -469,6 +505,12 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
             className="bg-white/10 text-gray-300 px-3 py-2 rounded-lg text-sm hover:bg-white/20 transition-all flex items-center gap-1.5"
             title="Reset GSC property and clear data">
             <Trash2 className="w-3.5 h-3.5" /> Reset
+          </button>
+          <button onClick={checkLiveSerps} disabled={checkingSerp || !snapshot?.keywords?.length}
+            className="bg-blue-500/20 border border-blue-500/40 text-blue-200 px-3 py-2 rounded-lg text-sm hover:bg-blue-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50"
+            title="Check real-time Google SERP positions via Serper.dev (history is saved permanently)">
+            {checkingSerp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+            {checkingSerp ? 'Checking...' : (serpResult || 'Live SERP')}
           </button>
           <button onClick={() => syncKeywords()} disabled={syncing}
             className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transition-all flex items-center gap-2 disabled:opacity-50">

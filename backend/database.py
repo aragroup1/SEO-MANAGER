@@ -220,6 +220,41 @@ class TrackedKeyword(Base):
     website = relationship("Website", back_populates="tracked_keywords")
 
 
+class SerpRankingHistory(Base):
+    """
+    Append-only history of live SERP positions from Serper.dev.
+    Every refresh-live call writes a row per keyword. NEVER deleted on
+    untrack — keyword is stored as a string so history survives.
+    """
+    __tablename__ = "serp_ranking_history"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    keyword = Column(String, nullable=False, index=True)
+    position = Column(Float, nullable=True)  # null = not in top 100
+    ranking_url = Column(String, nullable=True)
+    country = Column(String, default="gb")
+    source = Column(String, default="serper")
+    checked_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class KeywordVolume(Base):
+    """
+    Persistent monthly search volume per (website, keyword, country, month).
+    Survives GSC syncs and tracked-keyword deletions. One row per month.
+    """
+    __tablename__ = "keyword_volumes"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    keyword = Column(String, nullable=False, index=True)
+    country = Column(String, default="GB")
+    year_month = Column(String, nullable=False, index=True)  # "2026-04"
+    search_volume = Column(Integer, default=0)
+    competition = Column(Integer, default=0)  # 0-100
+    cpc = Column(Float, default=0)
+    source = Column(String, default="dataforseo")
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
 # Create all tables
 Base.metadata.create_all(bind=engine)
 

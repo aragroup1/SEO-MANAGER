@@ -864,6 +864,33 @@ async def startup_event():
                 "ALTER TABLE websites ADD COLUMN IF NOT EXISTS shopify_access_token VARCHAR",
                 "ALTER TABLE websites ADD COLUMN IF NOT EXISTS monthly_traffic INTEGER",
                 "ALTER TABLE tracked_keywords ADD COLUMN IF NOT EXISTS target_url VARCHAR",
+                """CREATE TABLE IF NOT EXISTS serp_ranking_history (
+                    id SERIAL PRIMARY KEY,
+                    website_id INTEGER NOT NULL REFERENCES websites(id),
+                    keyword VARCHAR NOT NULL,
+                    position FLOAT,
+                    ranking_url VARCHAR,
+                    country VARCHAR DEFAULT 'gb',
+                    source VARCHAR DEFAULT 'serper',
+                    checked_at TIMESTAMP DEFAULT NOW()
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_serp_hist_wk ON serp_ranking_history(website_id, keyword)",
+                "CREATE INDEX IF NOT EXISTS idx_serp_hist_when ON serp_ranking_history(checked_at)",
+                """CREATE TABLE IF NOT EXISTS keyword_volumes (
+                    id SERIAL PRIMARY KEY,
+                    website_id INTEGER NOT NULL REFERENCES websites(id),
+                    keyword VARCHAR NOT NULL,
+                    country VARCHAR DEFAULT 'GB',
+                    year_month VARCHAR NOT NULL,
+                    search_volume INTEGER DEFAULT 0,
+                    competition INTEGER DEFAULT 0,
+                    cpc FLOAT DEFAULT 0,
+                    source VARCHAR DEFAULT 'dataforseo',
+                    fetched_at TIMESTAMP DEFAULT NOW()
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_kv_wkc ON keyword_volumes(website_id, keyword, country)",
+                "CREATE INDEX IF NOT EXISTS idx_kv_month ON keyword_volumes(year_month)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_kv_wkcm ON keyword_volumes(website_id, keyword, country, year_month)",
             ]
             for migration in migrations:
                 try:
