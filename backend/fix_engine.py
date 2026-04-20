@@ -549,6 +549,26 @@ class ShopifyFixEngine:
                             "category": "content",
                             "batch_id": batch_id,
                         })
+                elif len(meta_title) < 30 or len(meta_title) > 60:
+                    length_issue = "too short" if len(meta_title) < 30 else "too long"
+                    ai_title = await self.ai.generate_meta_title(body_text or title, meta_title)
+                    if ai_title and ai_title != meta_title:
+                        fixes.append({
+                            "website_id": website_id,
+                            "fix_type": "meta_title",
+                            "platform": "shopify",
+                            "resource_type": "page",
+                            "resource_id": page_id,
+                            "resource_url": page_url,
+                            "resource_title": title,
+                            "field_name": "metafields_global_title_tag",
+                            "current_value": meta_title + " (" + str(len(meta_title)) + " chars)",
+                            "proposed_value": ai_title,
+                            "ai_reasoning": "Meta title is " + str(len(meta_title)) + " characters (" + length_issue + "). Optimal: 30-60 characters.",
+                            "severity": "medium",
+                            "category": "content",
+                            "batch_id": batch_id,
+                        })
 
                 if not meta_desc:
                     ai_desc = await self.ai.generate_meta_description(body_text or title, "")
@@ -566,6 +586,25 @@ class ShopifyFixEngine:
                             "proposed_value": ai_desc,
                             "ai_reasoning": "No meta description set for this page.",
                             "severity": "medium",
+                            "category": "content",
+                            "batch_id": batch_id,
+                        })
+                elif len(meta_desc) > 160:
+                    ai_desc = await self.ai.generate_meta_description(body_text or title, meta_desc)
+                    if ai_desc and ai_desc != meta_desc:
+                        fixes.append({
+                            "website_id": website_id,
+                            "fix_type": "meta_description",
+                            "platform": "shopify",
+                            "resource_type": "page",
+                            "resource_id": page_id,
+                            "resource_url": page_url,
+                            "resource_title": title,
+                            "field_name": "metafields_global_description_tag",
+                            "current_value": meta_desc[:180] + (" ..." if len(meta_desc) > 180 else "") + " (" + str(len(meta_desc)) + " chars)",
+                            "proposed_value": ai_desc,
+                            "ai_reasoning": "Meta description is " + str(len(meta_desc)) + " characters — Google truncates over 160.",
+                            "severity": "low",
                             "category": "content",
                             "batch_id": batch_id,
                         })
@@ -744,6 +783,7 @@ class WordPressFixEngine:
 
     async def scan_and_generate_fixes(self, website_id: int, batch_id: str) -> List[Dict]:
         fixes = []
+        all_items = []  # (item, content_type) for duplicate-title pass
 
         # Scan posts (paginated)
         page_num = 1
@@ -754,6 +794,7 @@ class WordPressFixEngine:
             for post in posts:
                 post_fixes = await self._analyze_wp_content(post, "post", website_id, batch_id)
                 fixes.extend(post_fixes)
+                all_items.append((post, "post"))
             if len(posts) < 100:
                 break
             page_num += 1
@@ -767,9 +808,47 @@ class WordPressFixEngine:
             for page in pages:
                 page_fixes = await self._analyze_wp_content(page, "page", website_id, batch_id)
                 fixes.extend(page_fixes)
+                all_items.append((page, "page"))
             if len(pages) < 100:
                 break
             page_num += 1
+
+        # Duplicate-title pass: flag every item sharing a title (except the first seen)
+        from bs4 import BeautifulSoup
+        title_map = {}
+        for item, ctype in all_items:
+            t = item.get("title", {}).get("rendered", "") or ""
+            clean = BeautifulSoup(t, 'html.parser').get_text(strip=True)
+            if not clean:
+                continue
+            title_map.setdefault(clean.lower(), []).append((item, ctype))
+        for clean_lower, group in title_map.items():
+            if len(group) < 2:
+                continue
+            for item, ctype in group[1:]:
+                content_id = str(item["id"])
+                url = item.get("link", "")
+                body_html = item.get("content", {}).get("rendered", "")
+                body_text = BeautifulSoup(body_html, 'html.parser').get_text(strip=True) if body_html else ""
+                orig_title = BeautifulSoup(item.get("title", {}).get("rendered", ""), 'html.parser').get_text(strip=True)
+                ai_title = await self.ai.generate_meta_title(body_text or orig_title, orig_title)
+                if ai_title and ai_title.lower() != orig_title.lower():
+                    fixes.append({
+                        "website_id": website_id,
+                        "fix_type": "meta_title",
+                        "platform": "wordpress",
+                        "resource_type": ctype,
+                        "resource_id": content_id,
+                        "resource_url": url,
+                        "resource_title": orig_title,
+                        "field_name": "title",
+                        "current_value": orig_title + " (duplicate)",
+                        "proposed_value": ai_title,
+                        "ai_reasoning": "Duplicate title — other pages share this exact title. Each page needs a unique title for search engines to distinguish them.",
+                        "severity": "medium",
+                        "category": "content",
+                        "batch_id": batch_id,
+                    })
 
         return fixes
 
@@ -812,7 +891,7 @@ class WordPressFixEngine:
 
         # Check excerpt/meta description
         excerpt_text = BeautifulSoup(excerpt, 'html.parser').get_text(strip=True) if excerpt else ""
-        if not excerpt_text or len(excerpt_text) < 50:
+        if not excerpt_text:
             ai_desc = await self.ai.generate_meta_description(body_text or title, "")
             if ai_desc:
                 fixes.append({
@@ -824,13 +903,56 @@ class WordPressFixEngine:
                     "resource_url": url,
                     "resource_title": title,
                     "field_name": "excerpt",
-                    "current_value": excerpt_text if excerpt_text else "(empty)",
+                    "current_value": "(empty)",
                     "proposed_value": ai_desc,
                     "ai_reasoning": "No excerpt/meta description set. Most themes use the excerpt as the meta description.",
                     "severity": "medium",
                     "category": "content",
                     "batch_id": batch_id,
                 })
+        elif len(excerpt_text) > 160:
+            ai_desc = await self.ai.generate_meta_description(body_text or title, excerpt_text)
+            if ai_desc and ai_desc != excerpt_text:
+                fixes.append({
+                    "website_id": website_id,
+                    "fix_type": "meta_description",
+                    "platform": "wordpress",
+                    "resource_type": content_type,
+                    "resource_id": content_id,
+                    "resource_url": url,
+                    "resource_title": title,
+                    "field_name": "excerpt",
+                    "current_value": excerpt_text[:180] + (" ..." if len(excerpt_text) > 180 else "") + " (" + str(len(excerpt_text)) + " chars)",
+                    "proposed_value": ai_desc,
+                    "ai_reasoning": "Meta description is " + str(len(excerpt_text)) + " characters — Google truncates over 160. Shorter descriptions display in full.",
+                    "severity": "low",
+                    "category": "content",
+                    "batch_id": batch_id,
+                })
+
+        # Check for missing H1
+        if body_html:
+            soup_check = BeautifulSoup(body_html, 'html.parser')
+            if not soup_check.find('h1'):
+                clean_for_h1 = BeautifulSoup(title, 'html.parser').get_text(strip=True) if title else ""
+                proposed_h1 = clean_for_h1 or (body_text.split(".")[0][:70] if body_text else "")
+                if proposed_h1:
+                    fixes.append({
+                        "website_id": website_id,
+                        "fix_type": "h1_heading",
+                        "platform": "wordpress",
+                        "resource_type": content_type,
+                        "resource_id": content_id,
+                        "resource_url": url,
+                        "resource_title": clean_for_h1,
+                        "field_name": "h1",
+                        "current_value": "(missing)",
+                        "proposed_value": proposed_h1,
+                        "ai_reasoning": "Page has no H1 heading. Each page needs exactly one H1 to signal the primary topic to search engines.",
+                        "severity": "high",
+                        "category": "content",
+                        "batch_id": batch_id,
+                    })
 
         # Check thin content (posts only)
         word_count = len(body_text.split()) if body_text else 0
@@ -852,9 +974,9 @@ class WordPressFixEngine:
                 "batch_id": batch_id,
             })
 
-        # Check title — too short, too long, or generic
+        # Check title — too short or too long (matches audit thresholds: <30, >60)
         clean_title = BeautifulSoup(title, 'html.parser').get_text(strip=True) if title else ""
-        if clean_title and (len(clean_title) < 20 or len(clean_title) > 70):
+        if clean_title and (len(clean_title) < 30 or len(clean_title) > 60):
             ai_title = await self.ai.generate_meta_title(body_text or clean_title, clean_title)
             if ai_title and ai_title != clean_title:
                 fixes.append({
@@ -868,7 +990,7 @@ class WordPressFixEngine:
                     "field_name": "title",
                     "current_value": clean_title + " (" + str(len(clean_title)) + " chars)",
                     "proposed_value": ai_title,
-                    "ai_reasoning": "Title is " + ("too short" if len(clean_title) < 20 else "too long") + " (" + str(len(clean_title)) + " chars). Optimal: 30-60 characters.",
+                    "ai_reasoning": "Title is " + ("too short" if len(clean_title) < 30 else "too long") + " (" + str(len(clean_title)) + " chars). Optimal: 30-60 characters.",
                     "severity": "medium",
                     "category": "content",
                     "batch_id": batch_id,
@@ -996,6 +1118,8 @@ class WordPressFixEngine:
                 return await self._apply_wp_content(fix)
             elif fix.fix_type == "structured_data":
                 return await self._apply_wp_structured_data(fix)
+            elif fix.fix_type == "h1_heading":
+                return await self._apply_wp_h1_heading(fix)
             else:
                 return False, "Fix type '" + fix.fix_type + "' not yet supported for WordPress"
         except Exception as e:
@@ -1202,6 +1326,40 @@ class WordPressFixEngine:
         result = await self._api_put(endpoint, {"content": new_content})
         if result:
             return True, f"Appended {fix.field_name} to page content"
+        return False, "WordPress API rejected the update"
+
+    async def _apply_wp_h1_heading(self, fix: ProposedFix) -> Tuple[bool, str]:
+        """Prepend an H1 heading to post/page content. Safe — never replaces existing content."""
+        resource_id = (fix.resource_id or "").strip()
+        if not resource_id:
+            return False, "Fix is missing WordPress post/page ID — regenerate this fix"
+        endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+
+        from bs4 import BeautifulSoup
+        proposed = (fix.proposed_value or "").strip()
+        # Force plain text for the heading
+        if "<" in proposed and ">" in proposed:
+            proposed = BeautifulSoup(proposed, "html.parser").get_text(" ", strip=True)
+        proposed = proposed.strip()[:120]
+        if not proposed:
+            return False, "Proposed H1 is empty"
+
+        existing = await self._xmlrpc_get_content(resource_id) or ""
+        if not existing:
+            data = await self._api_get(endpoint)
+            if data:
+                existing = data.get("content", {}).get("raw", data.get("content", {}).get("rendered", "")) or ""
+
+        # Don't double-insert if an H1 is already present
+        if BeautifulSoup(existing, "html.parser").find('h1'):
+            return True, "H1 already present in content"
+
+        h1_block = f'<!-- wp:heading {{"level":1}} -->\n<h1>{proposed}</h1>\n<!-- /wp:heading -->'
+        new_content = h1_block + "\n\n" + existing.lstrip()
+        print(f"[WP Fix] Prepending H1 to {endpoint}: '{proposed}'")
+        result = await self._api_put(endpoint, {"content": new_content})
+        if result:
+            return True, "H1 heading prepended to content"
         return False, "WordPress API rejected the update"
 
     async def _xmlrpc_get_content(self, post_id: str) -> Optional[str]:

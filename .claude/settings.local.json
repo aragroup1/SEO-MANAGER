@@ -13,7 +13,8 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('backend/integrations.py', encoding='utf-8'\\).read\\(\\)\\); print\\('integrations.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('backend/fix_engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('fix_engine.py OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('backend/integrations.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/fix_engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/fix_engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('fix_engine.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }
