@@ -977,6 +977,15 @@ class WordPressFixEngine:
 
     async def apply_fix(self, fix: ProposedFix) -> Tuple[bool, str]:
         try:
+            # Resolve missing resource_id from resource_url (geo fixes don't carry an ID)
+            if not (fix.resource_id or "").strip() and getattr(fix, "resource_url", ""):
+                resolved = await self._resolve_post_id_from_url(fix.resource_url)
+                if resolved:
+                    fix.resource_id = str(resolved["id"])
+                    if resolved.get("type"):
+                        fix.resource_type = resolved["type"]
+                    print(f"[WP Fix] Resolved {fix.resource_url} -> {fix.resource_type} {fix.resource_id}")
+
             if fix.fix_type == "alt_text":
                 return await self._apply_wp_alt_text(fix)
             elif fix.fix_type == "meta_description":
@@ -991,6 +1000,28 @@ class WordPressFixEngine:
                 return False, "Fix type '" + fix.fix_type + "' not yet supported for WordPress"
         except Exception as e:
             return False, str(e)
+
+    async def _resolve_post_id_from_url(self, url: str) -> Optional[Dict]:
+        """Resolve a URL to a WordPress post/page ID via REST slug lookup."""
+        try:
+            from urllib.parse import urlparse
+            path = urlparse(url).path.strip("/")
+            if not path:
+                return None
+            slug = path.rstrip("/").split("/")[-1]
+            if not slug:
+                return None
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                for rtype, endpoint in [("page", "pages"), ("post", "posts")]:
+                    resp = await client.get(f"{self.wp_url}/wp-json/wp/v2/{endpoint}",
+                        params={"slug": slug, "per_page": 1}, headers=self.headers)
+                    if resp.status_code == 200:
+                        items = resp.json() or []
+                        if items:
+                            return {"id": items[0].get("id"), "type": rtype}
+        except Exception as e:
+            print(f"[WP Fix] URL resolve error: {e}")
+        return None
 
     async def _apply_wp_alt_text(self, fix: ProposedFix) -> Tuple[bool, str]:
         resource_id = (fix.resource_id or "").strip()
@@ -1146,8 +1177,32 @@ class WordPressFixEngine:
         return False, "WordPress rejected the title update"
 
     async def _apply_wp_structured_data(self, fix: ProposedFix) -> Tuple[bool, str]:
-        """Structured data fixes need manual implementation or plugin — provide guidance."""
-        return False, "Structured data (Schema) fixes require a WordPress SEO plugin like Yoast or RankMath. Apply manually in the page editor."
+        """Append schema/byline/date HTML to the end of post content. Safe — never replaces existing content."""
+        resource_id = (fix.resource_id or "").strip()
+        if not resource_id:
+            return False, "Fix is missing WordPress post/page ID — regenerate this fix"
+        endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+
+        proposed = (fix.proposed_value or "").strip()
+        if not proposed:
+            return False, "Proposed value is empty"
+
+        existing = await self._xmlrpc_get_content(resource_id) or ""
+        if not existing:
+            data = await self._api_get(endpoint)
+            if data:
+                existing = data.get("content", {}).get("raw", data.get("content", {}).get("rendered", "")) or ""
+
+        # Avoid re-appending if already present
+        if proposed[:60] and proposed[:60] in existing:
+            return True, "Schema already present in content"
+
+        new_content = existing.rstrip() + "\n\n" + proposed
+        print(f"[WP Fix] Appending structured_data ({fix.field_name}) to {endpoint}")
+        result = await self._api_put(endpoint, {"content": new_content})
+        if result:
+            return True, f"Appended {fix.field_name} to page content"
+        return False, "WordPress API rejected the update"
 
     async def _xmlrpc_get_content(self, post_id: str) -> Optional[str]:
         """Get post content via XML-RPC (works when REST API auth is blocked)."""
@@ -1201,11 +1256,31 @@ class WordPressFixEngine:
         if not resource_id:
             return False, "Fix is missing WordPress post/page ID — regenerate this fix"
         endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
-        print(f"[WP Fix] Applying content fix to {endpoint}")
-        result = await self._api_put(endpoint, {"content": fix.proposed_value})
-        if result:
-            return True, "Content updated in WordPress"
-        return False, "WordPress API rejected the update"
+
+        proposed = (fix.proposed_value or "").strip()
+        field = (fix.field_name or "").lower()
+
+        # Placeholder "recommendation" proposals — no real content to write
+        if not proposed or (proposed.startswith("(") and proposed.endswith(")")):
+            return False, "This fix is a recommendation only — expand content manually in the WordPress editor"
+
+        # Safe append for geo fixes (never replace existing content)
+        append_fields = {"faq_section", "entity_table", "statistics", "author_byline", "date_markup"}
+        if field in append_fields:
+            existing = await self._xmlrpc_get_content(resource_id) or ""
+            if not existing:
+                data = await self._api_get(endpoint)
+                if data:
+                    existing = data.get("content", {}).get("raw", data.get("content", {}).get("rendered", "")) or ""
+            new_content = existing.rstrip() + "\n\n" + proposed
+            print(f"[WP Fix] Appending to {endpoint} (field={field})")
+            result = await self._api_put(endpoint, {"content": new_content})
+            if result:
+                return True, f"Appended {field} to page content"
+            return False, "WordPress API rejected the update"
+
+        # Unknown/unsafe replace — block to avoid destroying pages
+        return False, "Auto-replace of full page content is disabled for safety. Apply in the WordPress editor."
 
 
 # ─────────────────────────────────────────

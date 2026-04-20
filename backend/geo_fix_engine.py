@@ -332,7 +332,7 @@ Return ONLY the summary text, nothing else."""
     if not page.get("has_author") and word_count > 300:
         fixes.append({
             "website_id": website_id,
-            "fix_type": "meta_title",
+            "fix_type": "structured_data",
             "platform": site_type,
             "resource_type": "page",
             "resource_id": "",
@@ -351,7 +351,7 @@ Return ONLY the summary text, nothing else."""
     if not page.get("has_date") and not page.get("has_updated") and word_count > 200:
         fixes.append({
             "website_id": website_id,
-            "fix_type": "meta_title",
+            "fix_type": "structured_data",
             "platform": site_type,
             "resource_type": "page",
             "resource_id": "",
