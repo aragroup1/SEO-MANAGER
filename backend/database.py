@@ -256,6 +256,8 @@ class StrategistResult(Base):
     linking_generated_at = Column(DateTime, nullable=True)
     decay = Column(JSON, nullable=True)
     decay_generated_at = Column(DateTime, nullable=True)
+    geo_audit = Column(JSON, nullable=True)
+    geo_audit_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

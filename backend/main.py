@@ -1028,6 +1028,8 @@ async def startup_event():
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS linking_generated_at TIMESTAMP",
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS decay JSON",
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS decay_generated_at TIMESTAMP",
+                "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS geo_audit JSON",
+                "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS geo_audit_at TIMESTAMP",
             ]
             for migration in migrations:
                 try:

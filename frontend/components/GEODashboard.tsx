@@ -58,6 +58,20 @@ export default function GEODashboard({ websiteId }: { websiteId: number }) {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
+  useEffect(() => {
+    setAudit(null); setError('');
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${API_URL}/api/geo/${websiteId}/saved`);
+        if (!r.ok || cancelled) return;
+        const d = await r.json();
+        if (!cancelled && d.audit) setAudit(d.audit);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [websiteId, API_URL]);
+
   const runAudit = async () => {
     setLoading(true);
     setError('');

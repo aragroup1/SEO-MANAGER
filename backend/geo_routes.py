@@ -3,9 +3,19 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 import asyncio
-from database import get_db, Website
+from datetime import datetime
+from database import get_db, Website, StrategistResult
 
 router = APIRouter(prefix="/api/geo", tags=["geo"])
+
+
+@router.get("/{website_id}/saved")
+async def get_saved_geo(website_id: int, db: Session = Depends(get_db)):
+    """Return the most recent saved GEO audit for this website."""
+    row = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+    if not row or not row.geo_audit:
+        return {"audit": None}
+    return {"audit": row.geo_audit, "audit_at": row.geo_audit_at.isoformat() if row.geo_audit_at else None}
 
 
 def _run_geo_audit(website_id: int):
@@ -46,6 +56,19 @@ async def run_geo_audit_endpoint(website_id: int, db: Session = Depends(get_db))
 
     from geo_engine import run_geo_audit
     result = await run_geo_audit(website_id)
+
+    if isinstance(result, dict) and not result.get("error"):
+        try:
+            row = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+            if not row:
+                row = StrategistResult(website_id=website_id)
+                db.add(row); db.flush()
+            row.geo_audit = result
+            row.geo_audit_at = datetime.utcnow()
+            db.commit()
+        except Exception as e:
+            print(f"[GEO] Failed to persist audit: {e}")
+            db.rollback()
     return result
 
 
