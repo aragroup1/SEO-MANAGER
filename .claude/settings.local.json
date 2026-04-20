@@ -3,7 +3,17 @@
     "allow": [
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/report_routes.py'\\).read\\(\\)\\); print\\('report_routes.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/keyword_routes.py'\\).read\\(\\)\\); print\\('keyword_routes.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/integrations.py'\\).read\\(\\)\\); print\\('integrations.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/fix_engine.py'\\).read\\(\\)\\); print\\('fix_engine.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/report_routes.py', encoding='utf-8'\\).read\\(\\)\\); print\\('report_routes.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/keyword_routes.py', encoding='utf-8'\\).read\\(\\)\\); print\\('keyword_routes.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/integrations.py', encoding='utf-8'\\).read\\(\\)\\); print\\('integrations.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/fix_engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('fix_engine.py OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/integrations.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/fix_engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

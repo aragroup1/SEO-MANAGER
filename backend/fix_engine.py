@@ -1036,12 +1036,89 @@ class WordPressFixEngine:
                 break  # Just fix the first image if none matched
 
         if not updated:
-            return False, "No images found in content"
+            # Fallback: update media library alt text directly (works for Gutenberg blocks, featured images, cover blocks)
+            media_result = await self._update_attached_media_alt(resource_id, fix.proposed_value)
+            if media_result:
+                return True, media_result
+            return False, "No images found in content or media library for this page"
 
         result = await self._api_put(endpoint, {"content": str(soup)})
         if result:
             return True, "Alt text updated in WordPress"
         return False, "WordPress API rejected the update"
+
+    async def _update_attached_media_alt(self, post_id: str, alt_text: str) -> Optional[str]:
+        """Find media items attached to a post and update the first one with empty alt_text. Uses REST for discovery, XML-RPC for the write."""
+        try:
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                resp = await client.get(f"{self.wp_url}/wp-json/wp/v2/media", params={"parent": post_id, "per_page": 50}, headers=self.headers)
+                if resp.status_code != 200:
+                    return None
+                media_items = resp.json() or []
+        except Exception as e:
+            print(f"[WP Media] list error: {e}")
+            return None
+
+        target = None
+        for m in media_items:
+            if not (m.get("alt_text") or "").strip():
+                target = m
+                break
+        if not target and media_items:
+            target = media_items[0]
+        if not target:
+            return None
+
+        media_id = target.get("id")
+        # Try REST first
+        result = await self._api_put(f"media/{media_id}", {"alt_text": alt_text})
+        if result:
+            return f"Alt text updated on media #{media_id} (via REST)"
+
+        # Fall back to XML-RPC custom_fields update
+        if await self._xmlrpc_set_media_alt(str(media_id), alt_text):
+            return f"Alt text updated on media #{media_id} (via XML-RPC)"
+        return None
+
+    async def _xmlrpc_set_media_alt(self, media_id: str, alt_text: str) -> bool:
+        try:
+            import base64
+            from xml.sax.saxutils import escape as _xml_escape
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Basic "):
+                return False
+            decoded = base64.b64decode(auth_header.split(" ")[1]).decode()
+            username, password = decoded.split(":", 1)
+            u = _xml_escape(username)
+            p = _xml_escape(password)
+            a = _xml_escape(alt_text)
+            xml_payload = f"""<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.editPost</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>{u}</string></value></param>
+    <param><value><string>{p}</string></value></param>
+    <param><value><int>{media_id}</int></value></param>
+    <param><value><struct>
+      <member><name>custom_fields</name><value><array><data>
+        <value><struct>
+          <member><name>key</name><value><string>_wp_attachment_image_alt</string></value></member>
+          <member><name>value</name><value><string>{a}</string></value></member>
+        </struct></value>
+      </data></array></value></member>
+    </struct></value></param>
+  </params>
+</methodCall>"""
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.post(f"{self.wp_url}/xmlrpc.php", content=xml_payload.encode(),
+                    headers={"Content-Type": "text/xml; charset=utf-8"})
+                if resp.status_code == 200 and "fault" not in resp.text.lower():
+                    return True
+                print(f"[WP XML-RPC] setMediaAlt failed: {resp.text[:300]}")
+        except Exception as e:
+            print(f"[WP XML-RPC] setMediaAlt error: {e}")
+        return False
 
     async def _apply_wp_meta_title(self, fix: ProposedFix) -> Tuple[bool, str]:
         """Update meta title via Yoast SEO or RankMath post meta, or fall back to post title."""

@@ -9,6 +9,13 @@ DB: Railway PostgreSQL, auto-deploys from GitHub main branch.
 
 ## Critical Rules
 
+## Session Start Protocol
+1. Read CLAUDE.md only
+2. State the task in one sentence
+3. Use grep/glob to find relevant code — never open a file cold
+4. Read max 100 lines at a time
+5. Don't read docs/* unless the task explicitly requires it
+
 ### Token Preservation
 - **NEVER rewrite entire files.** Only edit the specific lines that need changing.
 - Read files with targeted line ranges before editing.
@@ -16,7 +23,8 @@ DB: Railway PostgreSQL, auto-deploys from GitHub main branch.
 - Don't regenerate working code to "improve" it.
 
 ### Verification Before Editing
-- Before applying a fix, use a Sonnet sub-agent to verify the change is correct.
+- Use a sub-agent to verify only when touching files >300 lines 
+or when the change affects multiple systems.
 - Check for: syntax errors, missing imports, broken references, unintended side effects.
 - Read the surrounding code context first — don't edit blind.
 
@@ -30,7 +38,7 @@ DB: Railway PostgreSQL, auto-deploys from GitHub main branch.
 - **Frontend:** TypeScript React, Tailwind CSS, `lucide-react` icons, functional components.
 - **UI:** Dark theme — `bg-white/5`, `border-white/10`, purple/pink gradients, glassmorphism.
 - Don't add `framer-motion` to new components unless asked.
-- when you have made a mistake, log it and add it to the .md for things not to try next time. essentially I want this to act like an experimenters or researchers journal of what a future claude instance should not to while working on this project
+- Log mistakes to docs/ISSUES.md only — never edit CLAUDE.md mid-session.
 
 ## Architecture Quick Ref
 
@@ -71,6 +79,12 @@ DB: Railway PostgreSQL, auto-deploys from GitHub main branch.
 - `docs/REFERENCE.md` — Full file map, env vars, API endpoints, DB schema
 - `docs/INTEGRATIONS.md` — Shopify, WordPress, Google OAuth, DataForSEO patterns
 - `docs/ISSUES.md` — Current blockers and pending items
+
+## Context Files (load only when needed)
+- Navigating/finding files → read docs/REFERENCE.md
+- Touching integrations → read docs/INTEGRATIONS.md  
+- Debugging errors → read docs/ISSUES.md
+- Default: don't load any of them
 
 ## User Context
 
