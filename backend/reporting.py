@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from database import (
     SessionLocal, Website, AuditReport, KeywordSnapshot,
-    TrackedKeyword, ProposedFix
+    TrackedKeyword, ProposedFix, StrategistResult
 )
 
 load_dotenv()
@@ -228,6 +228,61 @@ async def generate_report_data(website_id: int, month: str = None) -> Dict[str, 
 
         report["keyword_history"] = [{"date": s.snapshot_date.strftime("%Y-%m-%d"), "total": s.total_keywords, "clicks": s.total_clicks, "impressions": s.total_impressions, "avg_position": s.avg_position} for s in db.query(KeywordSnapshot).filter(KeywordSnapshot.website_id == website_id).order_by(KeywordSnapshot.snapshot_date.asc()).limit(30).all()]
 
+        # ─── AI Strategy / Hub & Spoke / Content Decay (from persisted StrategistResult) ───
+        sr = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+        if sr and sr.strategy:
+            S = sr.strategy or {}
+            report["strategy"] = {
+                "generated_at": sr.strategy_generated_at.isoformat() if sr.strategy_generated_at else None,
+                "executive_summary": S.get("executive_summary"),
+                "current_state": S.get("current_state") or {},
+                "strategic_goals": (S.get("strategic_goals") or [])[:6],
+                "keyword_portfolio": S.get("keyword_portfolio") or {},
+                "content_strategy": S.get("content_strategy") or {},
+                "technical_priorities": (S.get("technical_priorities") or [])[:10],
+                "link_strategy": S.get("link_strategy") or {},
+                "monthly_milestones": (S.get("monthly_milestones") or [])[:6],
+                "weekly_focus": S.get("weekly_focus") or {},
+                "risks_and_mitigations": (S.get("risks_and_mitigations") or [])[:5],
+                "raw_strategy": S.get("raw_strategy"),
+            }
+        else:
+            report["strategy"] = None
+
+        if sr and sr.linking:
+            L = sr.linking or {}
+            report["hub_and_spoke"] = {
+                "analyzed_at": sr.linking_generated_at.isoformat() if sr.linking_generated_at else None,
+                "total_pages": L.get("total_pages", 0),
+                "total_internal_links": L.get("total_internal_links", 0),
+                "avg_links_per_page": L.get("avg_links_per_page", 0),
+                "hubs": [{"url": h.get("url"), "inbound": h.get("inbound", 0)} for h in (L.get("hubs") or [])[:10]],
+                "orphans": [{"url": o.get("url"), "inbound": o.get("inbound", 0)} for o in (L.get("orphans") or [])[:10]],
+                "suggestions": [
+                    {"from": s.get("from_url"), "to": s.get("to_url"),
+                     "anchor": s.get("anchor_text"), "reason": s.get("reason"),
+                     "category": s.get("category")}
+                    for s in (L.get("suggestions") or [])[:15]
+                ],
+            }
+        else:
+            report["hub_and_spoke"] = None
+
+        if sr and sr.decay:
+            D = sr.decay or {}
+            report["content_decay"] = {
+                "analyzed_at": sr.decay_generated_at.isoformat() if sr.decay_generated_at else None,
+                "total_pages_analyzed": D.get("total_pages_analyzed", 0),
+                "high_risk_count": len(D.get("high_risk") or []),
+                "medium_risk_count": len(D.get("medium_risk") or []),
+                "high_risk": [
+                    {"url": i.get("url"), "days": i.get("days_since_update"), "rec": i.get("recommendation")}
+                    for i in (D.get("high_risk") or [])[:8]
+                ],
+            }
+        else:
+            report["content_decay"] = None
+
         # ─── AI Summary ───
         report["ai_summary"] = await _generate_ai_summary(report)
 
@@ -237,6 +292,31 @@ async def generate_report_data(website_id: int, month: str = None) -> Dict[str, 
         return {"error": str(e)}
     finally:
         db.close()
+
+
+def _strategy_block(report: Dict) -> str:
+    s = report.get("strategy") or {}
+    if not s:
+        return ""
+    lines = ["AI STRATEGY (persisted):"]
+    if s.get("executive_summary"):
+        lines.append(f"- Summary: {s['executive_summary']}")
+    wf = s.get("weekly_focus") or {}
+    if wf.get("this_week"):
+        lines.append("- This week: " + "; ".join(wf["this_week"][:3]))
+    if wf.get("quick_wins"):
+        lines.append("- Quick wins: " + "; ".join(wf["quick_wins"][:3]))
+    return "\n".join(lines)
+
+
+def _hub_block(report: Dict) -> str:
+    h = report.get("hub_and_spoke") or {}
+    if not h:
+        return ""
+    return (f"HUB & SPOKE: {h.get('total_pages',0)} pages, "
+            f"{h.get('total_internal_links',0)} internal links, "
+            f"{len(h.get('orphans') or [])} orphans, "
+            f"{len(h.get('suggestions') or [])} link suggestions pending.")
 
 
 async def _generate_ai_summary(report: Dict) -> str:
@@ -266,6 +346,9 @@ Resources fixed: {', '.join([f"{c} {t}s" for t, c in fixes.get('by_resource',{})
 {f"- Clicks growth: {report['since_inception']['initial_clicks']} → {kw['total_clicks'] if kw else 0} ({report['since_inception']['clicks_growth']:+d})" if report.get('since_inception') and kw else ''}
 {f"- Position change: {report['since_inception']['position_change']:+.1f} (positive = improved)" if report.get('since_inception') else ''}
 {f"- Total fixes applied: {report['since_inception']['total_fixes_applied']}, Audits run: {report['since_inception']['total_audits']}" if report.get('since_inception') else ''}
+
+{_strategy_block(report)}
+{_hub_block(report)}
 
 {f"Improved: {', '.join([c['query']+' (+'+str(c['change'])+')' for c in kw.get('ranking_changes',{}).get('improved',[])[:5]])}" if kw and kw.get('ranking_changes',{}).get('improved') else ''}
 {f"Declined: {', '.join([c['query']+' ('+str(c['change'])+')' for c in kw.get('ranking_changes',{}).get('declined',[])[:5]])}" if kw and kw.get('ranking_changes',{}).get('declined') else ''}

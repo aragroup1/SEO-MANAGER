@@ -469,6 +469,190 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
             pdf.cell(5, 6, "", ln=0)
             pdf.cell(0, 6, _safe(L), ln=True)
 
+    # ══════════════ AI STRATEGY ══════════════
+    strategy = data.get("strategy") or {}
+    if strategy:
+        pdf.add_page()
+        _draw_section_header(pdf, "AI Master Strategy", "What the SEO engine recommends, based on all site intelligence.")
+
+        exec_s = strategy.get("executive_summary")
+        if exec_s:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(76, 29, 149)
+            pdf.cell(0, 6, "Executive Summary", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 9.5)
+            pdf.multi_cell(0, 5, _safe(exec_s, 900))
+            pdf.ln(3)
+
+        cs = strategy.get("current_state") or {}
+        swot = [
+            ("Strengths", cs.get("strengths") or [], (16, 185, 129)),
+            ("Weaknesses", cs.get("weaknesses") or [], (239, 68, 68)),
+            ("Opportunities", cs.get("opportunities") or [], (14, 165, 233)),
+            ("Threats", cs.get("threats") or [], (245, 158, 11)),
+        ]
+        if any(items for _, items, _ in swot):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(76, 29, 149)
+            pdf.cell(0, 6, "Current State (SWOT)", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            for label, items, color in swot:
+                if not items:
+                    continue
+                pdf.set_font("Helvetica", "B", 9)
+                pdf.set_text_color(*color)
+                pdf.cell(0, 5, _safe(label), ln=True)
+                pdf.set_text_color(30, 30, 30)
+                pdf.set_font("Helvetica", "", 9)
+                for it in items[:5]:
+                    pdf.cell(5, 5, "", ln=0)
+                    pdf.multi_cell(0, 5, _safe(f"- {it}", 240))
+                pdf.ln(1)
+            pdf.ln(2)
+
+        wf = strategy.get("weekly_focus") or {}
+        if wf.get("this_week"):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(76, 29, 149)
+            pdf.cell(0, 6, "This Week's Focus", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 9)
+            for i, a in enumerate(wf["this_week"][:7], 1):
+                pdf.cell(5, 5, "", ln=0)
+                pdf.multi_cell(0, 5, _safe(f"{i}. {a}", 240))
+            pdf.ln(2)
+
+        if wf.get("quick_wins"):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(5, 150, 105)
+            pdf.cell(0, 6, "Quick Wins (<1 hour)", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 9)
+            for a in wf["quick_wins"][:6]:
+                pdf.cell(5, 5, "", ln=0)
+                pdf.multi_cell(0, 5, _safe(f"- {a}", 240))
+            pdf.ln(2)
+
+        goals = strategy.get("strategic_goals") or []
+        if goals:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(76, 29, 149)
+            pdf.cell(0, 6, "Strategic Goals", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 9)
+            for g in goals[:6]:
+                line = f"- [{_safe(g.get('timeframe',''),20)}] {_safe(g.get('goal',''),140)}"
+                pdf.multi_cell(0, 5, line)
+                if g.get("target"):
+                    pdf.set_text_color(107, 114, 128)
+                    pdf.cell(8, 4, "", ln=0)
+                    pdf.multi_cell(0, 4, _safe(f"target: {g['target']}", 200))
+                    pdf.set_text_color(30, 30, 30)
+            pdf.ln(2)
+
+        tech = strategy.get("technical_priorities") or []
+        if tech:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(76, 29, 149)
+            pdf.cell(0, 6, "Technical Priorities", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 9)
+            for t in tech[:8]:
+                impact = _safe(t.get("impact", ""), 10)
+                effort = _safe(t.get("effort", ""), 10)
+                pdf.multi_cell(0, 5, _safe(f"- [{impact}/{effort}] {t.get('action','')}", 240))
+
+    # ══════════════ HUB & SPOKE ══════════════
+    hub = data.get("hub_and_spoke") or {}
+    if hub:
+        pdf.add_page()
+        _draw_section_header(pdf, "Hub & Spoke Internal Linking", "How the site's pages connect and where authority flows.")
+
+        y0 = pdf.get_y()
+        _draw_metric_card(pdf, 15, y0, 43, 22, "Pages", hub.get("total_pages", 0), (139, 92, 246))
+        _draw_metric_card(pdf, 60, y0, 43, 22, "Internal Links", hub.get("total_internal_links", 0), (236, 72, 153))
+        _draw_metric_card(pdf, 105, y0, 43, 22, "Avg Links/Page", hub.get("avg_links_per_page", 0), (14, 165, 233))
+        _draw_metric_card(pdf, 150, y0, 43, 22, "Orphans", len(hub.get("orphans") or []), (245, 158, 11))
+        pdf.set_y(y0 + 28)
+
+        hubs = hub.get("hubs") or []
+        if hubs:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(76, 29, 149)
+            pdf.cell(0, 6, "Top Hub Pages (authority sources)", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_fill_color(243, 244, 246)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(150, 6, "  URL", ln=0, fill=True)
+            pdf.cell(30, 6, "Inbound", ln=True, fill=True, align="C")
+            pdf.set_font("Helvetica", "", 9)
+            for i, h in enumerate(hubs[:8]):
+                if i % 2 == 0:
+                    pdf.set_fill_color(250, 250, 252)
+                    pdf.cell(180, 5, "", ln=0, fill=True)
+                    pdf.set_x(15)
+                pdf.cell(150, 5, _safe(f"  {h.get('url','')}", 85), ln=0)
+                pdf.cell(30, 5, str(h.get("inbound", 0)), ln=True, align="C")
+            pdf.ln(3)
+
+        orphans = hub.get("orphans") or []
+        if orphans:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(185, 28, 28)
+            pdf.cell(0, 6, "Orphan Pages (need inbound links)", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 9)
+            for o in orphans[:8]:
+                pdf.multi_cell(0, 5, _safe(f"- {o.get('url','')}", 200))
+            pdf.ln(2)
+
+        suggestions = hub.get("suggestions") or []
+        if suggestions:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(76, 29, 149)
+            pdf.cell(0, 6, "Recommended Internal Links", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 8.5)
+            for s in suggestions[:10]:
+                line = f"- {s.get('from','')}  ->  {s.get('to','')}"
+                pdf.multi_cell(0, 4.5, _safe(line, 220))
+                if s.get("anchor") or s.get("reason"):
+                    pdf.set_text_color(107, 114, 128)
+                    extra = []
+                    if s.get("anchor"): extra.append(f'anchor: "{s["anchor"]}"')
+                    if s.get("reason"): extra.append(s["reason"])
+                    pdf.cell(5, 4, "", ln=0)
+                    pdf.multi_cell(0, 4, _safe(" - ".join(extra), 240))
+                    pdf.set_text_color(30, 30, 30)
+
+    # ══════════════ CONTENT DECAY ══════════════
+    decay = data.get("content_decay") or {}
+    if decay and (decay.get("high_risk_count") or decay.get("medium_risk_count")):
+        pdf.add_page()
+        _draw_section_header(pdf, "Content Decay", "Pages that may be losing rankings because they haven't been updated.")
+
+        y0 = pdf.get_y()
+        _draw_metric_card(pdf, 15, y0, 58, 22, "Pages Analyzed", decay.get("total_pages_analyzed", 0), (139, 92, 246))
+        _draw_metric_card(pdf, 77, y0, 58, 22, "High Risk", decay.get("high_risk_count", 0), (239, 68, 68))
+        _draw_metric_card(pdf, 139, y0, 58, 22, "Medium Risk", decay.get("medium_risk_count", 0), (245, 158, 11))
+        pdf.set_y(y0 + 28)
+
+        hr = decay.get("high_risk") or []
+        if hr:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(185, 28, 28)
+            pdf.cell(0, 6, "High-Risk Stale Pages", ln=True)
+            pdf.set_text_color(30, 30, 30)
+            pdf.set_font("Helvetica", "", 9)
+            for p in hr[:8]:
+                pdf.multi_cell(0, 5, _safe(f"- {p.get('url','')} ({p.get('days','?')}d old)", 220))
+                if p.get("rec"):
+                    pdf.set_text_color(107, 114, 128)
+                    pdf.cell(5, 4, "", ln=0)
+                    pdf.multi_cell(0, 4, _safe(f"-> {p['rec']}", 240))
+                    pdf.set_text_color(30, 30, 30)
+
     # ══════════════ PAGE 5: WHAT'S NEXT ══════════════
     if ai_summary:
         pdf.add_page()

@@ -17,6 +17,7 @@ interface ReportData {
   fixes: Record<string, any>; audit_history: any[];
   keyword_history: any[]; ai_summary: string;
   since_inception: any; ga4_traffic: any;
+  strategy: any; hub_and_spoke: any; content_decay: any;
 }
 
 // ─── Interactive SVG Chart Component ───
@@ -537,6 +538,253 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
             <div className="mt-2 flex gap-2 flex-wrap">
               {Object.entries(fixes.by_resource).map(([type, count]: [string, any]) => (
                 <span key={type} className="text-xs bg-purple-500/10 text-purple-400 px-2 py-0.5 rounded-full">{count} {type}s fixed</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* AI Strategy */}
+      {report.strategy && (
+        <div className="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 rounded-xl p-5 border border-indigo-500/20 space-y-4">
+          <h3 className="text-white font-semibold flex items-center gap-2">
+            <Target className="w-5 h-5 text-indigo-400" /> AI Master Strategy
+            {report.strategy.generated_at && (
+              <span className="text-[10px] text-gray-500 font-normal ml-2">
+                generated {String(report.strategy.generated_at).slice(0, 10)}
+              </span>
+            )}
+          </h3>
+
+          {report.strategy.executive_summary && (
+            <p className="text-gray-200 text-sm leading-relaxed bg-white/5 rounded-lg p-3 border border-white/5">
+              {report.strategy.executive_summary}
+            </p>
+          )}
+
+          {(report.strategy.current_state?.strengths?.length ||
+            report.strategy.current_state?.weaknesses?.length ||
+            report.strategy.current_state?.opportunities?.length ||
+            report.strategy.current_state?.threats?.length) ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                { l: 'Strengths', k: 'strengths', c: 'text-green-400', b: 'border-green-500/20' },
+                { l: 'Weaknesses', k: 'weaknesses', c: 'text-red-400', b: 'border-red-500/20' },
+                { l: 'Opportunities', k: 'opportunities', c: 'text-cyan-400', b: 'border-cyan-500/20' },
+                { l: 'Threats', k: 'threats', c: 'text-orange-400', b: 'border-orange-500/20' },
+              ].map(s => {
+                const items: string[] = report.strategy.current_state?.[s.k] || [];
+                if (!items.length) return null;
+                return (
+                  <div key={s.k} className={`bg-white/5 rounded-lg p-3 border ${s.b}`}>
+                    <p className={`text-xs font-semibold mb-2 ${s.c}`}>{s.l}</p>
+                    <ul className="space-y-1">
+                      {items.map((it: string, i: number) => (
+                        <li key={i} className="text-gray-300 text-xs flex gap-2"><span className={s.c}>•</span>{it}</li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {report.strategy.weekly_focus?.this_week?.length > 0 && (
+            <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+              <p className="text-xs font-semibold mb-2 text-purple-400 flex items-center gap-1">
+                <Zap className="w-3 h-3" /> This Week's Focus
+              </p>
+              <ul className="space-y-1">
+                {report.strategy.weekly_focus.this_week.map((a: string, i: number) => (
+                  <li key={i} className="text-gray-300 text-xs flex gap-2">
+                    <span className="text-purple-400 font-bold">{i + 1}.</span>{a}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {report.strategy.weekly_focus?.quick_wins?.length > 0 && (
+            <div className="bg-green-500/5 rounded-lg p-3 border border-green-500/20">
+              <p className="text-xs font-semibold mb-2 text-green-400">Quick Wins (&lt;1 hour)</p>
+              <ul className="space-y-1">
+                {report.strategy.weekly_focus.quick_wins.map((a: string, i: number) => (
+                  <li key={i} className="text-gray-300 text-xs flex gap-2"><CheckCircle className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />{a}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {report.strategy.strategic_goals?.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold mb-2 text-gray-400">Strategic Goals</p>
+              <div className="space-y-1.5">
+                {report.strategy.strategic_goals.map((g: any, i: number) => (
+                  <div key={i} className="bg-white/5 rounded-lg p-2.5 border border-white/10">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-white text-xs font-medium">{g.goal}</span>
+                      <span className="text-[10px] text-gray-500 shrink-0">{g.timeframe}</span>
+                    </div>
+                    {g.target && <p className="text-gray-400 text-[11px] mt-0.5">Target: {g.target}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {report.strategy.technical_priorities?.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold mb-2 text-gray-400">Technical Priorities</p>
+              <div className="space-y-1">
+                {report.strategy.technical_priorities.map((t: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between bg-white/5 rounded px-3 py-1.5 text-xs">
+                    <span className="text-gray-200 truncate">{t.action}</span>
+                    <div className="flex gap-1.5 shrink-0 ml-2">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${t.impact === 'high' ? 'bg-red-500/20 text-red-300' : t.impact === 'medium' ? 'bg-yellow-500/20 text-yellow-300' : 'bg-gray-500/20 text-gray-300'}`}>{t.impact}</span>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-white/5 text-gray-400">{t.effort}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(report.strategy.keyword_portfolio?.primary_keywords?.length ||
+            report.strategy.content_strategy?.content_gaps?.length) ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {report.strategy.keyword_portfolio?.primary_keywords?.length > 0 && (
+                <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                  <p className="text-xs font-semibold mb-2 text-purple-400">Primary Keywords</p>
+                  <ul className="space-y-1">
+                    {report.strategy.keyword_portfolio.primary_keywords.slice(0, 5).map((k: string, i: number) => (
+                      <li key={i} className="text-gray-300 text-xs">• {k}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {report.strategy.content_strategy?.content_gaps?.length > 0 && (
+                <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                  <p className="text-xs font-semibold mb-2 text-cyan-400">Content Gaps</p>
+                  <ul className="space-y-1">
+                    {report.strategy.content_strategy.content_gaps.slice(0, 5).map((k: string, i: number) => (
+                      <li key={i} className="text-gray-300 text-xs">• {k}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* Hub & Spoke */}
+      {report.hub_and_spoke && (
+        <div className="bg-white/5 rounded-xl p-5 border border-white/10 space-y-3">
+          <h3 className="text-white font-semibold flex items-center gap-2">
+            <Globe className="w-5 h-5 text-pink-400" /> Hub &amp; Spoke Internal Linking
+            {report.hub_and_spoke.analyzed_at && (
+              <span className="text-[10px] text-gray-500 font-normal ml-2">
+                analyzed {String(report.hub_and_spoke.analyzed_at).slice(0, 10)}
+              </span>
+            )}
+          </h3>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { l: 'Pages', v: report.hub_and_spoke.total_pages },
+              { l: 'Internal Links', v: report.hub_and_spoke.total_internal_links },
+              { l: 'Avg Links/Page', v: report.hub_and_spoke.avg_links_per_page },
+              { l: 'Orphans', v: report.hub_and_spoke.orphans?.length || 0 },
+            ].map(m => (
+              <div key={m.l} className="text-center bg-white/5 rounded-lg p-3">
+                <p className="text-lg font-bold text-white">{typeof m.v === 'number' ? m.v.toLocaleString() : m.v}</p>
+                <p className="text-[10px] text-gray-500">{m.l}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {report.hub_and_spoke.hubs?.length > 0 && (
+              <div className="bg-white/5 rounded-lg p-3 border border-white/10">
+                <p className="text-xs font-semibold mb-2 text-purple-400">Top Hub Pages</p>
+                <div className="space-y-1">
+                  {report.hub_and_spoke.hubs.slice(0, 6).map((h: any, i: number) => (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-300 truncate">{h.url}</span>
+                      <span className="text-purple-400 font-bold shrink-0 ml-2">{h.inbound}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {report.hub_and_spoke.orphans?.length > 0 && (
+              <div className="bg-orange-500/5 rounded-lg p-3 border border-orange-500/20">
+                <p className="text-xs font-semibold mb-2 text-orange-400">Orphan Pages (need links)</p>
+                <div className="space-y-1">
+                  {report.hub_and_spoke.orphans.slice(0, 6).map((o: any, i: number) => (
+                    <div key={i} className="text-gray-300 text-xs truncate">{o.url}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {report.hub_and_spoke.suggestions?.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold mb-2 text-gray-400">Top Link Suggestions</p>
+              <div className="space-y-1">
+                {report.hub_and_spoke.suggestions.slice(0, 8).map((s: any, i: number) => (
+                  <div key={i} className="bg-white/5 rounded-lg p-2 text-xs border border-white/5">
+                    <div className="flex items-center gap-2 text-gray-200">
+                      <span className="truncate">{s.from}</span>
+                      <ArrowRight className="w-3 h-3 text-pink-400 shrink-0" />
+                      <span className="truncate">{s.to}</span>
+                    </div>
+                    {(s.anchor || s.reason) && (
+                      <p className="text-gray-500 text-[11px] mt-1">
+                        {s.anchor && <span className="text-pink-400">"{s.anchor}"</span>}
+                        {s.anchor && s.reason && ' — '}
+                        {s.reason}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Content Decay */}
+      {report.content_decay && (report.content_decay.high_risk_count > 0 || report.content_decay.medium_risk_count > 0) && (
+        <div className="bg-white/5 rounded-xl p-5 border border-white/10">
+          <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+            <Clock className="w-5 h-5 text-orange-400" /> Content Decay
+          </h3>
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div className="text-center bg-white/5 rounded-lg p-3">
+              <p className="text-lg font-bold text-white">{report.content_decay.total_pages_analyzed}</p>
+              <p className="text-[10px] text-gray-500">Analyzed</p>
+            </div>
+            <div className="text-center bg-red-500/5 rounded-lg p-3 border border-red-500/20">
+              <p className="text-lg font-bold text-red-400">{report.content_decay.high_risk_count}</p>
+              <p className="text-[10px] text-gray-500">High Risk</p>
+            </div>
+            <div className="text-center bg-yellow-500/5 rounded-lg p-3 border border-yellow-500/20">
+              <p className="text-lg font-bold text-yellow-400">{report.content_decay.medium_risk_count}</p>
+              <p className="text-[10px] text-gray-500">Medium Risk</p>
+            </div>
+          </div>
+          {report.content_decay.high_risk?.length > 0 && (
+            <div className="space-y-1">
+              {report.content_decay.high_risk.slice(0, 6).map((p: any, i: number) => (
+                <div key={i} className="bg-white/5 rounded px-3 py-1.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-gray-200 truncate">{p.url}</span>
+                    <span className="text-orange-400 text-[10px] shrink-0">{p.days}d old</span>
+                  </div>
+                  {p.rec && <p className="text-gray-500 text-[11px] mt-0.5">{p.rec}</p>}
+                </div>
               ))}
             </div>
           )}
