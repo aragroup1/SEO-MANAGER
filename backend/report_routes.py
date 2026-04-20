@@ -46,11 +46,26 @@ def _generate_pdf(data: dict) -> bytes:
     """Generate comprehensive PDF report."""
     try:
         from fpdf import FPDF
-        return _generate_pdf_fpdf(data)
     except ImportError as e:
         print(f"[PDF] fpdf2 not installed: {e}")
-        # Return a minimal PDF manually
         return _generate_minimal_pdf(data)
+    try:
+        return _generate_pdf_fpdf(data)
+    except Exception as e:
+        import traceback
+        print(f"[PDF] Full PDF generation failed, retrying without strategy sections: {e}")
+        traceback.print_exc()
+        # Retry without the optional strategy/hub/decay sections that may contain unexpected data
+        safe_data = dict(data)
+        safe_data["strategy"] = None
+        safe_data["hub_and_spoke"] = None
+        safe_data["content_decay"] = None
+        try:
+            return _generate_pdf_fpdf(safe_data)
+        except Exception as e2:
+            print(f"[PDF] Fallback also failed: {e2}")
+            traceback.print_exc()
+            return _generate_minimal_pdf(data)
 
 
 def _safe(text, max_len=200):
@@ -486,11 +501,17 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
             pdf.ln(3)
 
         cs = strategy.get("current_state") or {}
+        if not isinstance(cs, dict):
+            cs = {}
+        def _listify(v):
+            if isinstance(v, list): return v
+            if v: return [v]
+            return []
         swot = [
-            ("Strengths", cs.get("strengths") or [], (16, 185, 129)),
-            ("Weaknesses", cs.get("weaknesses") or [], (239, 68, 68)),
-            ("Opportunities", cs.get("opportunities") or [], (14, 165, 233)),
-            ("Threats", cs.get("threats") or [], (245, 158, 11)),
+            ("Strengths", _listify(cs.get("strengths")), (16, 185, 129)),
+            ("Weaknesses", _listify(cs.get("weaknesses")), (239, 68, 68)),
+            ("Opportunities", _listify(cs.get("opportunities")), (14, 165, 233)),
+            ("Threats", _listify(cs.get("threats")), (245, 158, 11)),
         ]
         if any(items for _, items, _ in swot):
             pdf.set_font("Helvetica", "B", 10)
@@ -534,7 +555,7 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
                 pdf.multi_cell(0, 5, _safe(f"- {a}", 240))
             pdf.ln(2)
 
-        goals = strategy.get("strategic_goals") or []
+        goals = [g for g in (strategy.get("strategic_goals") or []) if isinstance(g, dict)]
         if goals:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(76, 29, 149)
@@ -551,7 +572,7 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
                     pdf.set_text_color(30, 30, 30)
             pdf.ln(2)
 
-        tech = strategy.get("technical_priorities") or []
+        tech = [t for t in (strategy.get("technical_priorities") or []) if isinstance(t, dict)]
         if tech:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(76, 29, 149)
@@ -576,7 +597,7 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
         _draw_metric_card(pdf, 150, y0, 43, 22, "Orphans", len(hub.get("orphans") or []), (245, 158, 11))
         pdf.set_y(y0 + 28)
 
-        hubs = hub.get("hubs") or []
+        hubs = [h for h in (hub.get("hubs") or []) if isinstance(h, dict)]
         if hubs:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(76, 29, 149)
@@ -596,7 +617,7 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
                 pdf.cell(30, 5, str(h.get("inbound", 0)), ln=True, align="C")
             pdf.ln(3)
 
-        orphans = hub.get("orphans") or []
+        orphans = [o for o in (hub.get("orphans") or []) if isinstance(o, dict)]
         if orphans:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(185, 28, 28)
@@ -607,7 +628,7 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
                 pdf.multi_cell(0, 5, _safe(f"- {o.get('url','')}", 200))
             pdf.ln(2)
 
-        suggestions = hub.get("suggestions") or []
+        suggestions = [s for s in (hub.get("suggestions") or []) if isinstance(s, dict)]
         if suggestions:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(76, 29, 149)
@@ -638,7 +659,7 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
         _draw_metric_card(pdf, 139, y0, 58, 22, "Medium Risk", decay.get("medium_risk_count", 0), (245, 158, 11))
         pdf.set_y(y0 + 28)
 
-        hr = decay.get("high_risk") or []
+        hr = [p for p in (decay.get("high_risk") or []) if isinstance(p, dict)]
         if hr:
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(185, 28, 28)

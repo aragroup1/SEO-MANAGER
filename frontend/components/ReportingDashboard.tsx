@@ -214,8 +214,13 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
         const a = document.createElement('a'); a.href = url;
         a.download = `seo-report-${report?.domain || 'site'}-${selectedMonth || 'latest'}.pdf`;
         a.click(); window.URL.revokeObjectURL(url);
+      } else {
+        const txt = await r.text().catch(() => '');
+        alert(`PDF export failed (${r.status}). ${txt.slice(0, 300)}`);
       }
-    } catch {} finally { setDownloading(false); }
+    } catch (err: any) {
+      alert(`PDF export error: ${err?.message || err}`);
+    } finally { setDownloading(false); }
   };
 
   const fetchKeywordTrend = async (keyword: string) => {
