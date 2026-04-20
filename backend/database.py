@@ -237,6 +237,25 @@ class SerpRankingHistory(Base):
     checked_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class StrategistResult(Base):
+    """
+    Persistent cache of AI Strategist outputs per website.
+    One row per website — strategy, weekly plan, and portfolio each kept as
+    the most recent generation so dashboard re-renders don't lose findings.
+    """
+    __tablename__ = "strategist_results"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, unique=True, index=True)
+    strategy = Column(JSON, nullable=True)
+    strategy_generated_at = Column(DateTime, nullable=True)
+    weekly_plan = Column(JSON, nullable=True)
+    weekly_generated_at = Column(DateTime, nullable=True)
+    portfolio = Column(JSON, nullable=True)
+    portfolio_generated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class KeywordVolume(Base):
     """
     Persistent monthly search volume per (website, keyword, country, month).

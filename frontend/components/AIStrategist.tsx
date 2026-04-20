@@ -25,7 +25,22 @@ export default function AIStrategist({ websiteId }: { websiteId: number }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const API = process.env.NEXT_PUBLIC_API_URL || '';
 
-  useEffect(() => { setStrategy(null); setWeeklyPlan(null); setPortfolio(null); setMessages([]); }, [websiteId]);
+  useEffect(() => {
+    setStrategy(null); setWeeklyPlan(null); setPortfolio(null); setMessages([]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${API}/api/strategist/${websiteId}/saved`);
+        if (!r.ok || cancelled) return;
+        const d = await r.json();
+        if (cancelled) return;
+        if (d.strategy) setStrategy({ ...d.strategy, generated_at: d.strategy_generated_at });
+        if (d.weekly_plan) setWeeklyPlan({ ...d.weekly_plan, generated_at: d.weekly_generated_at });
+        if (d.portfolio) setPortfolio({ ...d.portfolio, generated_at: d.portfolio_generated_at });
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [websiteId, API]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   const generateStrategy = async () => {

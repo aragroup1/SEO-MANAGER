@@ -891,6 +891,19 @@ async def startup_event():
                 "CREATE INDEX IF NOT EXISTS idx_kv_wkc ON keyword_volumes(website_id, keyword, country)",
                 "CREATE INDEX IF NOT EXISTS idx_kv_month ON keyword_volumes(year_month)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_kv_wkcm ON keyword_volumes(website_id, keyword, country, year_month)",
+                """CREATE TABLE IF NOT EXISTS strategist_results (
+                    id SERIAL PRIMARY KEY,
+                    website_id INTEGER NOT NULL UNIQUE REFERENCES websites(id),
+                    strategy JSON,
+                    strategy_generated_at TIMESTAMP,
+                    weekly_plan JSON,
+                    weekly_generated_at TIMESTAMP,
+                    portfolio JSON,
+                    portfolio_generated_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_strat_wid ON strategist_results(website_id)",
             ]
             for migration in migrations:
                 try:
