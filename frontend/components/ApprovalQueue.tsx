@@ -33,7 +33,7 @@ interface Fix {
 
 interface FixSummary {
   total: number;
-  by_status: { pending: number; approved: number; rejected: number; applied: number; failed: number };
+  by_status: { pending: number; approved: number; rejected: number; applied: number; failed: number; manual: number };
   by_type: Record<string, number>;
   by_severity: Record<string, number>;
 }
@@ -148,6 +148,16 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
     }
   };
 
+  const markDone = async (fixId: number) => {
+    try {
+      await fetch(`${API_URL}/api/fixes/${fixId}/mark-done`, { method: 'POST' });
+      fetchFixes();
+      fetchSummary();
+    } catch (error) {
+      console.error('Error marking done:', error);
+    }
+  };
+
   const retryFix = async (fixId: number) => {
     try {
       await fetch(`${API_URL}/api/fixes/${fixId}/retry`, { method: 'POST' });
@@ -228,9 +238,24 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
       case 'broken_link': return 'Broken Link';
       case 'thin_content': return 'Thin Content';
       case 'structured_data': return 'Structured Data';
-      default: return type;
+      case 'h1_heading': return 'H1 Heading';
+      case 'multiple_h1': return 'Multiple H1s';
+      case 'manual_ssl': return 'SSL Certificate';
+      case 'manual_robots': return 'Robots.txt';
+      case 'manual_sitemap': return 'XML Sitemap';
+      case 'manual_viewport': return 'Viewport Meta';
+      case 'manual_og': return 'Open Graph Tags';
+      case 'manual_canonical': return 'Canonical Tag';
+      case 'manual_schema': return 'Structured Data';
+      case 'manual_broken_links': return 'Broken Link';
+      case 'manual_performance': return 'Performance';
+      case 'manual_compression': return 'Compression';
+      case 'manual_h1': return 'H1 Heading';
+      default: return type.replace(/_/g, ' ');
     }
   };
+
+  const isManualFix = (type: string) => type.startsWith('manual_');
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -239,6 +264,7 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
       case 'applied': return 'bg-green-500/20 text-green-400 border-green-500/30';
       case 'rejected': return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
       case 'failed': return 'bg-red-500/20 text-red-400 border-red-500/30';
+      case 'manual': return 'bg-purple-500/20 text-purple-300 border-purple-500/30';
       default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
     }
   };
@@ -288,13 +314,14 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
 
       {/* Summary Cards */}
       {summary && summary.total > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
             { label: 'Pending', count: summary.by_status.pending, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
             { label: 'Approved', count: summary.by_status.approved, color: 'text-blue-400', bg: 'bg-blue-500/10' },
             { label: 'Applied', count: summary.by_status.applied, color: 'text-green-400', bg: 'bg-green-500/10' },
             { label: 'Rejected', count: summary.by_status.rejected, color: 'text-gray-400', bg: 'bg-gray-500/10' },
             { label: 'Failed', count: summary.by_status.failed, color: 'text-red-400', bg: 'bg-red-500/10' },
+            { label: 'Manual', count: summary.by_status.manual || 0, color: 'text-purple-300', bg: 'bg-purple-500/10' },
           ].map(item => (
             <button key={item.label} onClick={() => setStatusFilter(item.label.toLowerCase())}
               className={`${item.bg} rounded-xl p-4 text-center border transition-all ${statusFilter === item.label.toLowerCase() ? 'border-purple-500' : 'border-white/10 hover:border-white/20'}`}>
@@ -397,7 +424,7 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
                   </div>
 
                   <div className="flex items-center gap-2 ml-3 shrink-0">
-                    {fix.status === 'pending' && (
+                    {fix.status === 'pending' && !isManualFix(fix.fix_type) && (
                       <>
                         <button onClick={(e) => { e.stopPropagation(); approveFix(fix.id); }}
                           className="bg-green-500/20 text-green-400 p-1.5 rounded-lg hover:bg-green-500/30 transition-all" title="Approve">
@@ -408,6 +435,12 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
                           <X className="w-4 h-4" />
                         </button>
                       </>
+                    )}
+                    {fix.status === 'manual' && (
+                      <button onClick={(e) => { e.stopPropagation(); markDone(fix.id); }}
+                        className="bg-purple-500/20 text-purple-300 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-purple-500/30 transition-all flex items-center gap-1.5" title="Mark as done">
+                        <Check className="w-3 h-3" /> Mark Done
+                      </button>
                     )}
                     {fix.status === 'approved' && (
                       <button onClick={(e) => { e.stopPropagation(); applyFix(fix.id); }}

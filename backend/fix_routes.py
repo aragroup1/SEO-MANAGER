@@ -176,6 +176,7 @@ async def get_fix_summary(website_id: int, db: Session = Depends(get_db)):
             "rejected": status_counts.get("rejected", 0),
             "applied": status_counts.get("applied", 0),
             "failed": status_counts.get("failed", 0),
+            "manual": status_counts.get("manual", 0),
         },
         "by_type": type_counts,
         "by_severity": severity_counts,
@@ -214,6 +215,21 @@ async def reject_fix(fix_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return {"status": "rejected", "message": "Fix rejected and will not be applied."}
+
+
+@router.post("/{fix_id}/mark-done")
+async def mark_manual_done(fix_id: int, db: Session = Depends(get_db)):
+    """Mark a manual-action fix as done (user applied it themselves)."""
+    fix = db.query(ProposedFix).filter(ProposedFix.id == fix_id).first()
+    if not fix:
+        raise HTTPException(status_code=404, detail="Fix not found")
+    if fix.status != "manual":
+        raise HTTPException(status_code=400, detail=f"Only manual fixes can be marked done (status: {fix.status})")
+    fix.status = "applied"
+    fix.applied_at = datetime.utcnow()
+    fix.updated_at = datetime.utcnow()
+    db.commit()
+    return {"status": "applied"}
 
 
 @router.post("/{fix_id}/retry")

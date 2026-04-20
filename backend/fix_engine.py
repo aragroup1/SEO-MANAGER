@@ -628,6 +628,28 @@ class ShopifyFixEngine:
                         "batch_id": batch_id,
                     })
 
+                # Multiple H1s in page body_html
+                if body_html:
+                    h1s = BeautifulSoup(body_html, 'html.parser').find_all('h1')
+                    if len(h1s) > 1:
+                        kept = BeautifulSoup(str(h1s[0]), 'html.parser').get_text(strip=True)[:120]
+                        fixes.append({
+                            "website_id": website_id,
+                            "fix_type": "multiple_h1",
+                            "platform": "shopify",
+                            "resource_type": "page",
+                            "resource_id": page_id,
+                            "resource_url": page_url,
+                            "resource_title": title,
+                            "field_name": "body_html",
+                            "current_value": str(len(h1s)) + " H1 tags found",
+                            "proposed_value": "Demote extra H1s to H2 (keep first: '" + (kept or "") + "')",
+                            "ai_reasoning": "Page body has " + str(len(h1s)) + " H1 tags. Each page should have exactly one H1.",
+                            "severity": "medium",
+                            "category": "content",
+                            "batch_id": batch_id,
+                        })
+
                 await asyncio.sleep(1.5)
 
             since_id = pages[-1]["id"]
@@ -688,6 +710,8 @@ class ShopifyFixEngine:
                 return await self._apply_meta_fix(fix)
             elif fix.fix_type == "thin_content":
                 return await self._apply_content_fix(fix)
+            elif fix.fix_type == "multiple_h1":
+                return await self._apply_multiple_h1_fix(fix)
             else:
                 return False, "Fix type '" + fix.fix_type + "' not yet implemented"
         except Exception as e:
@@ -733,6 +757,32 @@ class ShopifyFixEngine:
         if result:
             return True, "SEO " + fix.fix_type.replace("meta_", "") + " updated successfully"
         return False, "Shopify API error when updating " + fix.fix_type
+
+    async def _apply_multiple_h1_fix(self, fix: ProposedFix) -> Tuple[bool, str]:
+        """Demote extra H1s to H2 in a Shopify page body_html."""
+        resource_id = fix.resource_id
+        if fix.resource_type != "page":
+            return False, "Multiple H1 fix currently supported for Shopify pages only"
+        data = await self._api_get(f"pages/{resource_id}.json")
+        if not data or "page" not in data:
+            return False, "Could not fetch page"
+        body_html = data["page"].get("body_html", "") or ""
+        if not body_html:
+            return False, "Page body is empty"
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(body_html, 'html.parser')
+        h1s = soup.find_all('h1')
+        if len(h1s) < 2:
+            return True, "Only one H1 present — nothing to demote"
+        for extra in h1s[1:]:
+            extra.name = 'h2'
+        result = await self._api_put(
+            f"pages/{resource_id}.json",
+            {"page": {"id": int(resource_id), "body_html": str(soup)}}
+        )
+        if result:
+            return True, f"Demoted {len(h1s) - 1} extra H1(s) to H2"
+        return False, "Shopify API rejected the update"
 
     async def _apply_content_fix(self, fix: ProposedFix) -> Tuple[bool, str]:
         resource_type = fix.resource_type
@@ -933,7 +983,8 @@ class WordPressFixEngine:
         # Check for missing H1
         if body_html:
             soup_check = BeautifulSoup(body_html, 'html.parser')
-            if not soup_check.find('h1'):
+            h1s = soup_check.find_all('h1')
+            if not h1s:
                 clean_for_h1 = BeautifulSoup(title, 'html.parser').get_text(strip=True) if title else ""
                 proposed_h1 = clean_for_h1 or (body_text.split(".")[0][:70] if body_text else "")
                 if proposed_h1:
@@ -953,6 +1004,24 @@ class WordPressFixEngine:
                         "category": "content",
                         "batch_id": batch_id,
                     })
+            elif len(h1s) > 1:
+                kept = BeautifulSoup(str(h1s[0]), 'html.parser').get_text(strip=True)[:120]
+                fixes.append({
+                    "website_id": website_id,
+                    "fix_type": "multiple_h1",
+                    "platform": "wordpress",
+                    "resource_type": content_type,
+                    "resource_id": content_id,
+                    "resource_url": url,
+                    "resource_title": kept or title,
+                    "field_name": "h1",
+                    "current_value": str(len(h1s)) + " H1 tags found",
+                    "proposed_value": "Demote extra H1s to H2 (keep first: '" + (kept or "") + "')",
+                    "ai_reasoning": "Page has " + str(len(h1s)) + " H1 tags. Search engines expect exactly one H1 per page. Extra H1s will be demoted to H2.",
+                    "severity": "medium",
+                    "category": "content",
+                    "batch_id": batch_id,
+                })
 
         # Check thin content (posts only)
         word_count = len(body_text.split()) if body_text else 0
@@ -1120,6 +1189,8 @@ class WordPressFixEngine:
                 return await self._apply_wp_structured_data(fix)
             elif fix.fix_type == "h1_heading":
                 return await self._apply_wp_h1_heading(fix)
+            elif fix.fix_type == "multiple_h1":
+                return await self._apply_wp_multiple_h1(fix)
             else:
                 return False, "Fix type '" + fix.fix_type + "' not yet supported for WordPress"
         except Exception as e:
@@ -1362,6 +1433,47 @@ class WordPressFixEngine:
             return True, "H1 heading prepended to content"
         return False, "WordPress API rejected the update"
 
+    async def _apply_wp_multiple_h1(self, fix: ProposedFix) -> Tuple[bool, str]:
+        """Demote all H1s except the first to H2. Also updates matching Gutenberg block comments."""
+        resource_id = (fix.resource_id or "").strip()
+        if not resource_id:
+            return False, "Fix is missing WordPress post/page ID — regenerate this fix"
+        endpoint = "posts/" + resource_id if fix.resource_type == "post" else "pages/" + resource_id
+
+        existing = await self._xmlrpc_get_content(resource_id) or ""
+        if not existing:
+            data = await self._api_get(endpoint)
+            if data:
+                existing = data.get("content", {}).get("raw", data.get("content", {}).get("rendered", "")) or ""
+        if not existing:
+            return False, "Could not fetch page content"
+
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(existing, 'html.parser')
+        h1s = soup.find_all('h1')
+        if len(h1s) < 2:
+            return True, "Only one H1 present — nothing to demote"
+
+        for extra in h1s[1:]:
+            extra.name = 'h2'
+
+        new_html = str(soup)
+        # Also fix Gutenberg wp:heading level:1 comments so editor shows H2 too
+        import re
+        # First occurrence stays as level 1; subsequent become level 2
+        count = {"n": 0}
+        def _replace(match):
+            count["n"] += 1
+            if count["n"] == 1:
+                return match.group(0)
+            return '<!-- wp:heading {"level":2} -->'
+        new_html = re.sub(r'<!--\s*wp:heading\s*\{"level":1\}\s*-->', _replace, new_html)
+
+        result = await self._api_put(endpoint, {"content": new_html})
+        if result:
+            return True, f"Demoted {len(h1s) - 1} extra H1(s) to H2"
+        return False, "WordPress API rejected the update"
+
     async def _xmlrpc_get_content(self, post_id: str) -> Optional[str]:
         """Get post content via XML-RPC (works when REST API auth is blocked)."""
         try:
@@ -1551,6 +1663,17 @@ async def generate_fixes_for_website(website_id: int) -> Dict[str, Any]:
 
         else:
             return {"error": "No Shopify or WordPress integration connected. Connect one via the integration checklist to enable auto-fixes."}
+
+        # Append manual-only fixes surfaced from the latest audit
+        try:
+            from manual_issues import generate_manual_fixes
+            platform_label = "shopify" if (website.site_type == "shopify" or shopify_integration) else "wordpress"
+            manual_fixes = generate_manual_fixes(db, website_id, batch_id, platform_label)
+            if manual_fixes:
+                print(f"[FixEngine] Adding {len(manual_fixes)} manual-action fixes from audit findings")
+                all_fixes.extend(manual_fixes)
+        except Exception as e:
+            print(f"[FixEngine] Manual-issues generation failed: {e}")
 
         # Save fixes to database
         saved_count = 0
