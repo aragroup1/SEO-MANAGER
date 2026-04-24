@@ -13,25 +13,33 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://seo_user:seo_password@loc
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-try:
-    if "postgresql" in DATABASE_URL:
-        engine = create_engine(
-            DATABASE_URL,
-            pool_size=10,
-            max_overflow=20,
-            pool_pre_ping=True,
-            pool_recycle=3600,
-        )
-    else:
-        engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base = declarative_base()
-    print(f"Database connection initialized: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
-except Exception as e:
-    print(f"Database connection error, using SQLite fallback: {e}")
-    engine = create_engine("sqlite:///./seo_tool.db", connect_args={"check_same_thread": False})
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base = declarative_base()
+def _create_engine_with_fallback():
+    """Create engine with explicit connection test and SQLite fallback."""
+    global engine, SessionLocal, Base
+    try:
+        if "postgresql" in DATABASE_URL:
+            test_engine = create_engine(
+                DATABASE_URL,
+                pool_size=10, max_overflow=20,
+                pool_pre_ping=True, pool_recycle=3600,
+                connect_args={"connect_timeout": 5},
+            )
+        else:
+            test_engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+        # Test the connection immediately
+        with test_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine = test_engine
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        Base = declarative_base()
+        print(f"Database connection initialized: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
+    except Exception as e:
+        print(f"Database connection error, using SQLite fallback: {e}")
+        engine = create_engine("sqlite:///./seo_tool.db", connect_args={"check_same_thread": False})
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        Base = declarative_base()
+
+_create_engine_with_fallback()
 
 def get_db():
     db = SessionLocal()
@@ -289,8 +297,137 @@ class KeywordVolume(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Create all tables
-Base.metadata.create_all(bind=engine)
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW MODELS FOR "WHAT'S MISSING" FEATURES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CoreWebVitalsSnapshot(Base):
+    """Stores Core Web Vitals measurements over time for trend analysis."""
+    __tablename__ = "core_web_vitals"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    url = Column(String, default="/")
+    lcp = Column(Float, nullable=True)  # Largest Contentful Paint (seconds)
+    inp = Column(Float, nullable=True)  # Interaction to Next Paint (seconds)
+    cls = Column(Float, nullable=True)  # Cumulative Layout Shift
+    fcp = Column(Float, nullable=True)  # First Contentful Paint
+    ttfb = Column(Float, nullable=True)  # Time to First Byte
+    device_type = Column(String, default="mobile")  # mobile | desktop
+    source = Column(String, default="pagespeed")
+    checked_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class NotificationChannel(Base):
+    """Configured notification channels per website (Slack, email, webhook, Discord)."""
+    __tablename__ = "notification_channels"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    channel_type = Column(String, nullable=False)  # slack, email, webhook, discord
+    name = Column(String, nullable=False)
+    config = Column(JSON, default=lambda: {})  # {url, token, email, smtp_host, etc.}
+    events = Column(JSON, default=lambda: [])  # ["audit_complete", "fix_applied", "ranking_drop", "cwv_poor"]
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class NotificationLog(Base):
+    """History of sent notifications."""
+    __tablename__ = "notification_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(Integer, ForeignKey("notification_channels.id"), nullable=False)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    event_type = Column(String, nullable=False)
+    status = Column(String, default="pending")  # sent, failed, pending
+    message = Column(Text)
+    response = Column(Text, nullable=True)
+    sent_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ImageAudit(Base):
+    """Image optimization audit results per image per page."""
+    __tablename__ = "image_audits"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    page_url = Column(String, nullable=False)
+    image_url = Column(String, nullable=False)
+    alt_text = Column(String, nullable=True)
+    has_dimensions = Column(Boolean, default=False)
+    file_size_kb = Column(Integer, nullable=True)
+    format = Column(String, nullable=True)
+    is_lazy_loaded = Column(Boolean, default=False)
+    is_above_fold = Column(Boolean, default=False)
+    issues = Column(JSON, default=lambda: [])
+    checked_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class MetaABTest(Base):
+    """A/B tests for meta titles and descriptions."""
+    __tablename__ = "meta_ab_tests"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    page_url = Column(String, nullable=False)
+    element_type = Column(String, nullable=False)  # title, description
+    variant_a = Column(Text, nullable=False)  # Original
+    variant_b = Column(Text, nullable=False)  # AI-generated
+    status = Column(String, default="draft")  # draft, running, completed
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    winner = Column(String, nullable=True)  # a, b, tie
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LocalSEOPresence(Base):
+    """Local SEO / Google Business Profile data per website."""
+    __tablename__ = "local_seo_presence"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, unique=True)
+    business_name = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    postcode = Column(String, nullable=True)
+    country = Column(String, default="GB")
+    phone = Column(String, nullable=True)
+    category = Column(String, nullable=True)
+    gbp_url = Column(String, nullable=True)
+    gbp_status = Column(String, default="not_claimed")  # not_claimed, claimed, optimized
+    review_count = Column(Integer, default=0)
+    avg_rating = Column(Float, nullable=True)
+    last_checked = Column(DateTime, nullable=True)
+
+
+class UserRole(Base):
+    """Multi-user role assignments per website."""
+    __tablename__ = "user_roles"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
+    role = Column(String, default="admin")  # admin, editor, viewer
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DatabaseBackup(Base):
+    """Track database backups for recovery."""
+    __tablename__ = "database_backups"
+    id = Column(Integer, primary_key=True, index=True)
+    backup_type = Column(String, default="manual")  # manual, scheduled, pre_migration
+    format = Column(String, default="json")  # json, sql
+    file_path = Column(String, nullable=False)
+    size_bytes = Column(Integer, default=0)
+    websites_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Create all tables (with fallback if primary engine fails)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"Primary engine table creation failed: {e}")
+    # Fallback engine should already be set if primary failed during init
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e2:
+        print(f"Fallback engine table creation also failed: {e2}")
 
 # Initialize default user
 def init_db():

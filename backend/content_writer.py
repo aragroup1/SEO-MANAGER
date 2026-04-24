@@ -271,3 +271,168 @@ Return JSON:
         return {"error": str(e)}
     finally:
         db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTO-PUBLISH: Shopify / WordPress
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def publish_content(content_id: int) -> Dict[str, Any]:
+    """Publish a ContentItem to the connected platform (Shopify or WordPress)."""
+    db = SessionLocal()
+    try:
+        content = db.query(ContentItem).filter(ContentItem.id == content_id).first()
+        if not content:
+            return {"error": "Content not found"}
+
+        website = db.query(Website).filter(Website.id == content.website_id).first()
+        if not website:
+            return {"error": "Website not found"}
+
+        from database import Integration
+        integration = db.query(Integration).filter(
+            Integration.website_id == website.id,
+            Integration.integration_type.in_(["shopify", "wordpress"]),
+            Integration.status == "active"
+        ).first()
+
+        if not integration:
+            return {"error": f"No active {'Shopify' if website.site_type == 'shopify' else 'WordPress'} integration found"}
+
+        # Parse content
+        content_data = {}
+        if content.ai_generated_content:
+            try:
+                content_data = json.loads(content.ai_generated_content)
+            except:
+                content_data = {"content_html": content.ai_generated_content, "title": content.title}
+
+        title = content_data.get("title", content.title)
+        body = content_data.get("content_html", content.ai_generated_content or "")
+
+        if integration.integration_type == "shopify":
+            return await _publish_to_shopify(integration, title, body, content)
+        elif integration.integration_type == "wordpress":
+            return await _publish_to_wordpress(integration, title, body, content)
+
+        return {"error": "Unsupported platform"}
+    finally:
+        db.close()
+
+
+async def _publish_to_shopify(integration, title: str, body: str, content: ContentItem) -> Dict[str, Any]:
+    """Publish as a Shopify blog article."""
+    config = integration.config or {}
+    store_url = config.get("shopify_store_url") or integration.account_name
+    if not store_url:
+        return {"error": "Shopify store URL not configured"}
+
+    token = integration.access_token
+    if not token:
+        return {"error": "Shopify access token not available"}
+
+    # Shopify GraphQL mutation to create a blog article
+    # First, get or create a blog
+    blog_id = config.get("default_blog_id")
+    if not blog_id:
+        # Try to find existing blog
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(
+                    f"https://{store_url}/admin/api/2024-01/blogs.json",
+                    headers={"X-Shopify-Access-Token": token}
+                )
+                if resp.status_code == 200:
+                    blogs = resp.json().get("blogs", [])
+                    if blogs:
+                        blog_id = blogs[0]["id"]
+        except Exception as e:
+            print(f"[Publish] Shopify blog fetch error: {e}")
+
+    if not blog_id:
+        return {"error": "No Shopify blog found. Create a blog first."}
+
+    # Create article
+    article_data = {
+        "article": {
+            "title": title,
+            "body_html": body,
+            "blog_id": blog_id,
+            "published": True,
+            "tags": ", ".join(content.keywords_target or []),
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"https://{store_url}/admin/api/2024-01/blogs/{blog_id}/articles.json",
+                headers={
+                    "X-Shopify-Access-Token": token,
+                    "Content-Type": "application/json"
+                },
+                json=article_data
+            )
+            if resp.status_code in (200, 201):
+                data = resp.json().get("article", {})
+                # Update content status
+                db = SessionLocal()
+                try:
+                    content.status = "Published"
+                    db.commit()
+                finally:
+                    db.close()
+                return {
+                    "success": True,
+                    "platform": "shopify",
+                    "published_url": f"https://{store_url}/blogs/news/{data.get('handle', '')}",
+                    "article_id": data.get("id"),
+                }
+            return {"error": f"Shopify API error: {resp.status_code}", "details": resp.text[:500]}
+    except Exception as e:
+        return {"error": f"Shopify publish failed: {str(e)}"}
+
+
+async def _publish_to_wordpress(integration, title: str, body: str, content: ContentItem) -> Dict[str, Any]:
+    """Publish as a WordPress post."""
+    config = integration.config or {}
+    wp_url = config.get("wp_url")
+    if not wp_url:
+        return {"error": "WordPress URL not configured"}
+
+    username = config.get("username")
+    password = config.get("password") or integration.access_token
+    if not username or not password:
+        return {"error": "WordPress credentials not available"}
+
+    post_data = {
+        "title": title,
+        "content": body,
+        "status": "publish",
+        "tags": content.keywords_target or [],
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts",
+                json=post_data,
+                auth=(username, password)
+            )
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                db = SessionLocal()
+                try:
+                    content.status = "Published"
+                    db.commit()
+                finally:
+                    db.close()
+                return {
+                    "success": True,
+                    "platform": "wordpress",
+                    "published_url": data.get("link"),
+                    "post_id": data.get("id"),
+                }
+            return {"error": f"WordPress API error: {resp.status_code}", "details": resp.text[:500]}
+    except Exception as e:
+        return {"error": f"WordPress publish failed: {str(e)}"}

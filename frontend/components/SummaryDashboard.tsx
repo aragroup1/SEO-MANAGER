@@ -8,7 +8,8 @@ import {
   Eye, AlertTriangle, CheckCircle, Loader2, Zap, Bot, Globe, BarChart3,
   ChevronRight, Shield, Trophy, Target, FileText, Brain, Wand2,
   Sparkles, ArrowUp, ArrowDown, Clock, Layers, Star, MessageSquare,
-  Link2, RefreshCw, ExternalLink, Lock, Unlock, Users
+  Link2, RefreshCw, ExternalLink, Lock, Unlock, Users,
+  Download, FileSpreadsheet, FileJson
 } from 'lucide-react';
 
 // ─── Types ───
@@ -594,8 +595,31 @@ export default function SummaryDashboard({ websiteId, onNavigate }: { websiteId:
             </button>
           </motion.div>
 
-          {/* Quick Actions */}
+          {/* Export Data */}
           <motion.div custom={9} variants={cardVariants} initial="hidden" animate="visible" className="card-liquid p-5">
+            <h3 className="text-[#f5f5f7] font-semibold text-sm mb-4">Export Data</h3>
+            <div className="space-y-2">
+              {[
+                { label: 'Audit Report (CSV)', url: `/api/export/${website.id}/audit.csv`, icon: FileSpreadsheet },
+                { label: 'Keywords (CSV)', url: `/api/export/${website.id}/keywords.csv`, icon: FileSpreadsheet },
+                { label: 'Full Report (JSON)', url: `/api/export/${website.id}/full-report.json`, icon: FileJson },
+              ].map(exportItem => (
+                <a
+                  key={exportItem.url}
+                  href={`${process.env.NEXT_PUBLIC_API_URL || ''}${exportItem.url}`}
+                  download
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs text-[#a1a1aa] hover:bg-white/[0.03] hover:text-[#f5f5f7] transition-all"
+                >
+                  <exportItem.icon className="w-3.5 h-3.5" />
+                  <span className="flex-1 text-left">{exportItem.label}</span>
+                  <Download className="w-3 h-3 text-[#52525b]" />
+                </a>
+              ))}
+            </div>
+          </motion.div>
+
+          {/* Quick Actions */}
+          <motion.div custom={10} variants={cardVariants} initial="hidden" animate="visible" className="card-liquid p-5">
             <h3 className="text-[#f5f5f7] font-semibold text-sm mb-4">Quick Actions</h3>
             <div className="space-y-2">
               {[

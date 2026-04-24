@@ -9,6 +9,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 import json
+import io
 import secrets
 import hashlib
 import time
@@ -48,7 +49,9 @@ def _get_rate_limit(endpoint: str) -> int:
 # Import shared database objects
 from database import (
     Base, engine, SessionLocal, get_db, DATABASE_URL,
-    User, Website, AuditReport, ContentItem, Integration, ProposedFix, KeywordSnapshot, TrackedKeyword
+    User, Website, AuditReport, ContentItem, Integration, ProposedFix, KeywordSnapshot, TrackedKeyword,
+    CoreWebVitalsSnapshot, NotificationChannel, NotificationLog, ImageAudit, MetaABTest,
+    LocalSEOPresence, UserRole, DatabaseBackup
 )
 
 app = FastAPI(title="SEO Intelligence Platform")
@@ -562,6 +565,14 @@ async def get_content_item(website_id: int, content_id: int, db: Session = Depen
         except:
             content_data = {"content_html": item.ai_generated_content}
     return {"id": item.id, "title": item.title, "content_type": item.content_type, "status": item.status, "keywords": item.keywords_target, "content": content_data}
+
+@app.post("/api/content/{website_id}/{content_id}/publish")
+async def publish_content_item(website_id: int, content_id: int, db: Session = Depends(get_db)):
+    """Publish a content item to the connected platform."""
+    from content_writer import publish_content
+    result = await publish_content(content_id)
+    return result
+
 
 @app.delete("/api/content/{website_id}/{content_id}")
 async def delete_content_item(website_id: int, content_id: int, db: Session = Depends(get_db)):
@@ -1285,6 +1296,104 @@ async def startup_event():
                 "CREATE INDEX IF NOT EXISTS idx_snapshots_date ON keyword_snapshots(snapshot_date)",
                 "CREATE INDEX IF NOT EXISTS idx_tracked_website ON tracked_keywords(website_id)",
                 "CREATE INDEX IF NOT EXISTS idx_integration_website ON integrations(website_id)",
+                # New tables for missing features
+                """CREATE TABLE IF NOT EXISTS core_web_vitals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    website_id INTEGER NOT NULL,
+                    url VARCHAR DEFAULT '/',
+                    lcp FLOAT,
+                    inp FLOAT,
+                    cls FLOAT,
+                    fcp FLOAT,
+                    ttfb FLOAT,
+                    device_type VARCHAR DEFAULT 'mobile',
+                    source VARCHAR DEFAULT 'pagespeed',
+                    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_cwv_website ON core_web_vitals(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_cwv_checked ON core_web_vitals(checked_at)",
+                """CREATE TABLE IF NOT EXISTS notification_channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    website_id INTEGER NOT NULL,
+                    channel_type VARCHAR NOT NULL,
+                    name VARCHAR NOT NULL,
+                    config JSON,
+                    events JSON,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
+                """CREATE TABLE IF NOT EXISTS notification_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id INTEGER NOT NULL,
+                    website_id INTEGER NOT NULL,
+                    event_type VARCHAR NOT NULL,
+                    status VARCHAR DEFAULT 'pending',
+                    message TEXT,
+                    response TEXT,
+                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_notif_logs_website ON notification_logs(website_id)",
+                """CREATE TABLE IF NOT EXISTS image_audits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    website_id INTEGER NOT NULL,
+                    page_url VARCHAR NOT NULL,
+                    image_url VARCHAR NOT NULL,
+                    alt_text VARCHAR,
+                    has_dimensions BOOLEAN DEFAULT 0,
+                    file_size_kb INTEGER,
+                    format VARCHAR,
+                    is_lazy_loaded BOOLEAN DEFAULT 0,
+                    is_above_fold BOOLEAN DEFAULT 0,
+                    issues JSON,
+                    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_imgaudit_website ON image_audits(website_id)",
+                """CREATE TABLE IF NOT EXISTS meta_ab_tests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    website_id INTEGER NOT NULL,
+                    page_url VARCHAR NOT NULL,
+                    element_type VARCHAR NOT NULL,
+                    variant_a TEXT NOT NULL,
+                    variant_b TEXT NOT NULL,
+                    status VARCHAR DEFAULT 'draft',
+                    start_date TIMESTAMP,
+                    end_date TIMESTAMP,
+                    winner VARCHAR,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
+                """CREATE TABLE IF NOT EXISTS local_seo_presence (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    website_id INTEGER NOT NULL UNIQUE,
+                    business_name VARCHAR,
+                    address VARCHAR,
+                    city VARCHAR,
+                    postcode VARCHAR,
+                    country VARCHAR DEFAULT 'GB',
+                    phone VARCHAR,
+                    category VARCHAR,
+                    gbp_url VARCHAR,
+                    gbp_status VARCHAR DEFAULT 'not_claimed',
+                    review_count INTEGER DEFAULT 0,
+                    avg_rating FLOAT,
+                    last_checked TIMESTAMP
+                )""",
+                """CREATE TABLE IF NOT EXISTS user_roles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    website_id INTEGER NOT NULL,
+                    role VARCHAR DEFAULT 'admin',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
+                """CREATE TABLE IF NOT EXISTS database_backups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    backup_type VARCHAR DEFAULT 'manual',
+                    format VARCHAR DEFAULT 'json',
+                    file_path VARCHAR NOT NULL,
+                    size_bytes INTEGER DEFAULT 0,
+                    websites_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
             ]
             for migration in migrations:
                 try:
@@ -1298,6 +1407,480 @@ async def startup_event():
 
     # Start daily audit scheduler
     _schedule_daily_audits()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: BACKUP / EXPORT / DATA RECOVERY
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import os
+import json
+from datetime import datetime
+
+@app.get("/api/admin/db/check-railway")
+async def check_railway_data():
+    """Check if Railway PostgreSQL has data by trying common connection patterns."""
+    import psycopg2
+    results = []
+    # Try common Railway env var patterns
+    env_vars = ["DATABASE_URL", "RAILWAY_DATABASE_URL", "POSTGRES_URL", "PGDATABASE"]
+    for var in env_vars:
+        url = os.getenv(var)
+        if url:
+            try:
+                conn = psycopg2.connect(url)
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM websites")
+                count = cur.fetchone()[0]
+                cur.close()
+                conn.close()
+                results.append({"env_var": var, "connected": True, "websites": count})
+            except Exception as e:
+                results.append({"env_var": var, "connected": False, "error": str(e)})
+    if not results:
+        return {"message": "No PostgreSQL env vars found. Using SQLite fallback.", "sqlite_websites": 0}
+    return {"checks": results}
+
+
+@app.post("/api/admin/db/backup")
+async def create_backup():
+    """Create a JSON backup of the entire database."""
+    from export_engine import export_database_to_json
+    import os
+    os.makedirs("backups", exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filepath = f"backups/seo_backup_{timestamp}.json"
+    data = export_database_to_json()
+    with open(filepath, "w") as f:
+        f.write(data)
+    size = os.path.getsize(filepath)
+    db = SessionLocal()
+    try:
+        websites_count = db.query(Website).count()
+        backup = DatabaseBackup(
+            backup_type="manual", format="json", file_path=filepath,
+            size_bytes=size, websites_count=websites_count
+        )
+        db.add(backup)
+        db.commit()
+        return {"success": True, "file": filepath, "size_bytes": size, "websites": websites_count}
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/db/backups")
+async def list_backups():
+    """List all database backups."""
+    db = SessionLocal()
+    try:
+        backups = db.query(DatabaseBackup).order_by(DatabaseBackup.created_at.desc()).all()
+        return [{"id": b.id, "type": b.backup_type, "file": b.file_path,
+                 "size": b.size_bytes, "websites": b.websites_count,
+                 "created_at": b.created_at.isoformat() if b.created_at else None}
+                for b in backups]
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/db/restore")
+async def restore_from_backup(request: Request):
+    """Restore websites from a JSON backup file."""
+    data = await request.json()
+    filepath = data.get("file")
+    if not filepath or not os.path.exists(filepath):
+        raise HTTPException(status_code=400, detail="Backup file not found")
+    with open(filepath, "r") as f:
+        backup = json.load(f)
+    db = SessionLocal()
+    restored = 0
+    try:
+        for w_data in backup.get("websites", []):
+            # Check if domain already exists
+            existing = db.query(Website).filter(Website.domain == w_data["domain"]).first()
+            if existing:
+                continue
+            website = Website(
+                domain=w_data["domain"],
+                site_type=w_data.get("site_type", "custom"),
+                monthly_traffic=w_data.get("monthly_traffic"),
+                autonomy_mode=w_data.get("autonomy_mode", "manual"),
+            )
+            db.add(website)
+            db.commit()
+            db.refresh(website)
+            restored += 1
+            # Restore audits
+            for a in w_data.get("audits", []):
+                audit = AuditReport(
+                    website_id=website.id,
+                    health_score=a.get("health_score", 0),
+                    technical_score=a.get("technical_score", 0),
+                    content_score=a.get("content_score", 0),
+                    performance_score=a.get("performance_score", 0),
+                    mobile_score=a.get("mobile_score", 0),
+                    security_score=a.get("security_score", 0),
+                    total_issues=a.get("total_issues", 0),
+                    critical_issues=a.get("critical_issues", 0),
+                    errors=a.get("errors", 0),
+                    warnings=a.get("warnings", 0),
+                    detailed_findings=a.get("findings", {}),
+                )
+                db.add(audit)
+            # Restore content
+            for c in w_data.get("content", []):
+                item = ContentItem(
+                    website_id=website.id,
+                    title=c.get("title", ""),
+                    content_type=c.get("content_type", "Blog Post"),
+                    status=c.get("status", "Draft"),
+                    keywords_target=c.get("keywords_target", []),
+                )
+                db.add(item)
+            # Restore tracked keywords
+            for tk in w_data.get("tracked_keywords", []):
+                tk_obj = TrackedKeyword(
+                    website_id=website.id,
+                    keyword=tk.get("keyword", ""),
+                    current_position=tk.get("current_position"),
+                    target_position=tk.get("target_position", 1),
+                    status=tk.get("status", "tracking"),
+                )
+                db.add(tk_obj)
+            db.commit()
+        return {"success": True, "restored": restored, "total_in_backup": len(backup.get("websites", []))}
+    finally:
+        db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: CSV/JSON EXPORT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/export/{website_id}/audit.csv")
+async def export_audit_csv(website_id: int):
+    from export_engine import export_audit_to_csv
+    website = SessionLocal().query(Website).filter(Website.id == website_id).first()
+    domain = website.domain if website else "unknown"
+    csv_bytes = export_audit_to_csv(website_id)
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=audit-{domain}.csv"}
+    )
+
+
+@app.get("/api/export/{website_id}/keywords.csv")
+async def export_keywords_csv(website_id: int):
+    from export_engine import export_keywords_to_csv
+    website = SessionLocal().query(Website).filter(Website.id == website_id).first()
+    domain = website.domain if website else "unknown"
+    csv_bytes = export_keywords_to_csv(website_id)
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=keywords-{domain}.csv"}
+    )
+
+
+@app.get("/api/export/{website_id}/fixes.csv")
+async def export_fixes_csv(website_id: int):
+    from export_engine import export_fixes_to_csv
+    website = SessionLocal().query(Website).filter(Website.id == website_id).first()
+    domain = website.domain if website else "unknown"
+    csv_bytes = export_fixes_to_csv(website_id)
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=fixes-{domain}.csv"}
+    )
+
+
+@app.get("/api/export/{website_id}/full-report.json")
+async def export_full_report_json(website_id: int):
+    from export_engine import export_full_report_to_json
+    json_str = export_full_report_to_json(website_id)
+    return StreamingResponse(
+        io.BytesIO(json_str.encode("utf-8")),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=report-{website_id}.json"}
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: CORE WEB VITALS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/cwv/{website_id}/check")
+async def check_cwv(website_id: int):
+    from cwv_monitor import check_cwv_for_website
+    result = await check_cwv_for_website(website_id)
+    return result
+
+
+@app.get("/api/cwv/{website_id}/latest")
+async def get_latest_cwv_endpoint(website_id: int):
+    from cwv_monitor import get_latest_cwv
+    return get_latest_cwv(website_id)
+
+
+@app.get("/api/cwv/{website_id}/history")
+async def get_cwv_history_endpoint(website_id: int, days: int = 30, device: str = "mobile"):
+    from cwv_monitor import get_cwv_history
+    return {"history": get_cwv_history(website_id, days, device)}
+
+
+@app.get("/api/cwv/{website_id}/trends")
+async def get_cwv_trends_endpoint(website_id: int):
+    from cwv_monitor import get_cwv_trends
+    return get_cwv_trends(website_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: NOTIFICATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/notifications/{website_id}/channels")
+async def add_notification_channel(website_id: int, request: Request):
+    data = await request.json()
+    db = SessionLocal()
+    try:
+        channel = NotificationChannel(
+            website_id=website_id,
+            channel_type=data.get("channel_type"),
+            name=data.get("name"),
+            config=data.get("config", {}),
+            events=data.get("events", []),
+            is_active=data.get("is_active", True),
+        )
+        db.add(channel)
+        db.commit()
+        db.refresh(channel)
+        return {"id": channel.id, "name": channel.name, "channel_type": channel.channel_type, "events": channel.events}
+    finally:
+        db.close()
+
+
+@app.get("/api/notifications/{website_id}/channels")
+async def list_notification_channels(website_id: int):
+    from notifications import get_notification_channels
+    return {"channels": get_notification_channels(website_id)}
+
+
+@app.delete("/api/notifications/channels/{channel_id}")
+async def delete_notification_channel(channel_id: int):
+    db = SessionLocal()
+    try:
+        channel = db.query(NotificationChannel).filter(NotificationChannel.id == channel_id).first()
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        db.delete(channel)
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
+
+
+@app.post("/api/notifications/channels/{channel_id}/test")
+async def test_notification_channel(channel_id: int):
+    from notifications import notify_event
+    db = SessionLocal()
+    try:
+        channel = db.query(NotificationChannel).filter(NotificationChannel.id == channel_id).first()
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        results = await notify_event(
+            channel.website_id, "test",
+            "Test Notification",
+            f"This is a test notification from your {channel.name} channel. If you see this, your setup is working! 🎉",
+            {"test": True}
+        )
+        return {"success": True, "results": results}
+    finally:
+        db.close()
+
+
+@app.get("/api/notifications/{website_id}/logs")
+async def get_notification_logs(website_id: int, limit: int = 50):
+    from notifications import get_notification_logs
+    return {"logs": get_notification_logs(website_id, limit)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: SCHEMA.ORG GENERATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/schema/{website_id}/generate")
+async def generate_schema_endpoint(website_id: int, request: Request):
+    from schema_generator import generate_schema
+    data = await request.json()
+    schema_type = data.get("schema_type", "Organization")
+    result = await generate_schema(schema_type, data.get("data", {}))
+    return result
+
+
+@app.post("/api/schema/{website_id}/validate")
+async def validate_schema_endpoint(request: Request):
+    from schema_generator import validate_schema
+    data = await request.json()
+    schema = data.get("schema", {})
+    return validate_schema(schema)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: IMAGE OPTIMIZATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/images/{website_id}/audit")
+async def run_image_audit(website_id: int):
+    from image_optimizer import ImageOptimizer
+    optimizer = ImageOptimizer(website_id)
+    result = await optimizer.analyze_images()
+    return result
+
+
+@app.get("/api/images/{website_id}/stats")
+async def get_image_stats_endpoint(website_id: int):
+    from image_optimizer import get_image_stats
+    return get_image_stats(website_id)
+
+
+@app.get("/api/images/{website_id}/issues")
+async def get_image_issues_endpoint(website_id: int, severity: str = None, limit: int = 100):
+    from image_optimizer import get_image_issues
+    return {"issues": get_image_issues(website_id, severity, limit)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: A/B TESTING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/ab-test/{website_id}/create")
+async def create_ab_test(website_id: int, request: Request):
+    from ab_testing import create_test
+    data = await request.json()
+    result = await create_test(
+        website_id=website_id,
+        page_url=data.get("page_url", ""),
+        element_type=data.get("element_type", "title"),
+        variant_a=data.get("variant_a", ""),
+        keywords=data.get("keywords", [])
+    )
+    return result
+
+
+@app.get("/api/ab-test/{website_id}/list")
+async def list_ab_tests(website_id: int):
+    from ab_testing import list_tests
+    return {"tests": list_tests(website_id)}
+
+
+@app.post("/api/ab-test/{test_id}/start")
+async def start_ab_test(test_id: int):
+    from ab_testing import start_test
+    return start_test(test_id)
+
+
+@app.post("/api/ab-test/{test_id}/end")
+async def end_ab_test(test_id: int, request: Request):
+    from ab_testing import end_test
+    data = await request.json()
+    return end_test(test_id, data.get("winner", "tie"), data.get("notes"))
+
+
+@app.get("/api/ab-test/{test_id}/results")
+async def get_ab_test_results(test_id: int):
+    from ab_testing import get_test_results
+    return get_test_results(test_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: LOCAL SEO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/local-seo/{website_id}/setup")
+async def setup_local_seo(website_id: int, request: Request):
+    from local_seo import update_local_seo
+    data = await request.json()
+    return update_local_seo(website_id, data)
+
+
+@app.get("/api/local-seo/{website_id}/status")
+async def get_local_seo_endpoint(website_id: int):
+    from local_seo import get_local_seo_status
+    return get_local_seo_status(website_id)
+
+
+@app.post("/api/local-seo/{website_id}/check-citations")
+async def check_local_citations(website_id: int):
+    from local_seo import check_citations
+    return await check_citations(website_id)
+
+
+@app.get("/api/local-seo/{website_id}/schema")
+async def get_local_schema_endpoint(website_id: int):
+    from local_seo import generate_local_schema
+    return generate_local_schema(website_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: MULTI-USER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/users/register")
+async def register_user(request: Request):
+    data = await request.json()
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == data.get("email")).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already registered")
+        user = User(email=data.get("email"), name=data.get("name", ""))
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return {"id": user.id, "email": user.email, "name": user.name}
+    finally:
+        db.close()
+
+
+@app.get("/api/users")
+async def list_users():
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        return [{"id": u.id, "email": u.email, "name": u.name} for u in users]
+    finally:
+        db.close()
+
+
+@app.post("/api/websites/{website_id}/members")
+async def add_website_member(website_id: int, request: Request):
+    data = await request.json()
+    db = SessionLocal()
+    try:
+        role = UserRole(
+            user_id=data.get("user_id"),
+            website_id=website_id,
+            role=data.get("role", "editor"),
+        )
+        db.add(role)
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
+
+
+@app.get("/api/websites/{website_id}/members")
+async def get_website_members(website_id: int):
+    db = SessionLocal()
+    try:
+        roles = db.query(UserRole).filter(UserRole.website_id == website_id).all()
+        return [{"user_id": r.user_id, "role": r.role} for r in roles]
+    finally:
+        db.close()
+
 
 if __name__ == "__main__":
     import uvicorn

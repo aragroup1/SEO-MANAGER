@@ -9,7 +9,8 @@ import {
   BarChart3, Calendar, Users, FileSearch, FileText, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity, Trophy,
   ChevronDown, Menu, X, MessageSquare, Lock, LogOut,
-  ChevronRight, Compass, Layers, Wand2, Loader2
+  ChevronRight, Compass, Layers, Wand2, Loader2,
+  FileCode, Image, Split, MapPin, Bell, Download
 } from 'lucide-react';
 
 // Eagerly load only the components needed for initial render
@@ -28,6 +29,12 @@ const CompetitorAnalysis = lazy(() => import('@/components/CompetitorAnalysis'))
 const GEODashboard = lazy(() => import('@/components/GEODashboard'));
 const AIStrategist = lazy(() => import('@/components/AIStrategist'));
 const ReportingDashboard = lazy(() => import('@/components/ReportingDashboard'));
+const CoreWebVitalsPanel = lazy(() => import('@/components/CoreWebVitalsPanel'));
+const SchemaGenerator = lazy(() => import('@/components/SchemaGenerator'));
+const ImageOptimizer = lazy(() => import('@/components/ImageOptimizer'));
+const ABTestingPanel = lazy(() => import('@/components/ABTestingPanel'));
+const LocalSEOPanel = lazy(() => import('@/components/LocalSEOPanel'));
+const NotificationSettings = lazy(() => import('@/components/NotificationSettings'));
 
 interface Website {
   id: number;
@@ -195,12 +202,19 @@ export default function Dashboard() {
     { id: 'road-to-one', label: 'Road to #1', icon: Trophy },
     { id: 'issues', label: 'Issues & Fixes', icon: Wand2 },
     { id: 'divider2', label: '', icon: null },
+    { id: 'web-vitals', label: 'Web Vitals', icon: Gauge },
+    { id: 'schema', label: 'Schema', icon: FileCode },
+    { id: 'images', label: 'Images', icon: Image },
+    { id: 'ab-tests', label: 'A/B Tests', icon: Split },
+    { id: 'local-seo', label: 'Local SEO', icon: MapPin },
+    { id: 'divider3', label: '', icon: null },
     { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
     { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
     { id: 'content', label: 'Content Writer', icon: FileText },
     { id: 'competitors', label: 'Competitors', icon: Users },
-    { id: 'divider3', label: '', icon: null },
+    { id: 'divider4', label: '', icon: null },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
   ];
 
   // ─── Auth Loading ───
@@ -570,6 +584,60 @@ export default function Dashboard() {
                   transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <SettingsPanel websiteId={selectedWebsite} />
                 </motion.div>
+              )}
+
+              {activeTab === 'web-vitals' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`cwv-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <CoreWebVitalsPanel websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'schema' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`schema-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <SchemaGenerator websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'images' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`images-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <ImageOptimizer websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'ab-tests' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`ab-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <ABTestingPanel websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'local-seo' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`local-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <LocalSEOPanel websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'notifications' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`notif-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <NotificationSettings websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
             </AnimatePresence>
           </div>
