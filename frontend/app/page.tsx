@@ -1,7 +1,7 @@
 // frontend/app/page.tsx — Premium Ethereal Glass Dashboard
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, TrendingUp, Brain, Zap, Globe, ShoppingCart, Bot,
@@ -9,22 +9,25 @@ import {
   BarChart3, Calendar, Users, FileSearch, FileText, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity, Trophy,
   ChevronDown, Menu, X, MessageSquare, Lock, LogOut,
-  ChevronRight, Compass, Layers, Wand2
+  ChevronRight, Compass, Layers, Wand2, Loader2
 } from 'lucide-react';
-import ApprovalQueue from '@/components/ApprovalQueue';
-import ErrorMonitor from '@/components/ErrorMonitor';
-import ContentWriter from '@/components/ContentWriter';
-import CompetitorAnalysis from '@/components/CompetitorAnalysis';
-import AuditDashboard from '@/components/AuditDashboard';
-import WebsiteManager from '@/components/WebsiteManager';
-import KeywordTracker from '@/components/KeywordTracker';
-import RoadToOne from '@/components/RoadToOne';
-import GEODashboard from '@/components/GEODashboard';
-import AIStrategist from '@/components/AIStrategist';
-import ReportingDashboard from '@/components/ReportingDashboard';
-import SettingsPanel from '@/components/SettingsPanel';
+
+// Eagerly load only the components needed for initial render
 import OverviewDashboard from '@/components/OverviewDashboard';
 import SummaryDashboard from '@/components/SummaryDashboard';
+import SettingsPanel from '@/components/SettingsPanel';
+
+// Lazy load all tab-specific components for code splitting
+const AuditDashboard = lazy(() => import('@/components/AuditDashboard'));
+const KeywordTracker = lazy(() => import('@/components/KeywordTracker'));
+const RoadToOne = lazy(() => import('@/components/RoadToOne'));
+const ApprovalQueue = lazy(() => import('@/components/ApprovalQueue'));
+const ErrorMonitor = lazy(() => import('@/components/ErrorMonitor'));
+const ContentWriter = lazy(() => import('@/components/ContentWriter'));
+const CompetitorAnalysis = lazy(() => import('@/components/CompetitorAnalysis'));
+const GEODashboard = lazy(() => import('@/components/GEODashboard'));
+const AIStrategist = lazy(() => import('@/components/AIStrategist'));
+const ReportingDashboard = lazy(() => import('@/components/ReportingDashboard'));
 
 interface Website {
   id: number;
@@ -39,6 +42,20 @@ const fadeUpVariants = {
   hidden: { opacity: 0, y: 16 },
   visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.32, 0.72, 0, 1] } }
 };
+
+// Loading fallback for lazy-loaded tabs
+function TabLoader() {
+  return (
+    <div className="flex items-center justify-center h-[60vh]">
+      <div className="text-center">
+        <div className="w-10 h-10 rounded-2xl bg-[#0f0f12] border border-white/[0.06] flex items-center justify-center mx-auto mb-4">
+          <Loader2 className="w-5 h-5 text-[#7c6cf9] animate-spin" />
+        </div>
+        <p className="text-[#52525b] text-sm">Loading...</p>
+      </div>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const [authChecking, setAuthChecking] = useState(true);
@@ -465,69 +482,87 @@ export default function Dashboard() {
               )}
 
               {activeTab === 'audit' && selectedWebsite && (
-                <motion.div key={`audit-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <AuditDashboard websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`audit-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <AuditDashboard websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'keywords' && selectedWebsite && (
-                <motion.div key={`keywords-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <KeywordTracker key={`kt-${selectedWebsite}`} websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`keywords-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <KeywordTracker key={`kt-${selectedWebsite}`} websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'road-to-one' && selectedWebsite && (
-                <motion.div key={`r2o-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <RoadToOne websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`r2o-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <RoadToOne websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'issues' && selectedWebsite && (
-                <motion.div key={`issues-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <div className="space-y-6">
-                    <ErrorMonitor websiteId={selectedWebsite} />
-                    <ApprovalQueue websiteId={selectedWebsite} />
-                  </div>
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`issues-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <div className="space-y-6">
+                      <ErrorMonitor websiteId={selectedWebsite} />
+                      <ApprovalQueue websiteId={selectedWebsite} />
+                    </div>
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'content' && selectedWebsite && (
-                <motion.div key={`content-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <ContentWriter websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`content-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <ContentWriter websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'competitors' && selectedWebsite && (
-                <motion.div key={`competitors-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <CompetitorAnalysis websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`competitors-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <CompetitorAnalysis websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'ai-search' && selectedWebsite && (
-                <motion.div key={`geo-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <GEODashboard websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`geo-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <GEODashboard websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'strategist' && selectedWebsite && (
-                <motion.div key={`strategist-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <AIStrategist websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`strategist-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <AIStrategist websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'reports' && selectedWebsite && (
-                <motion.div key={`reports-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
-                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <ReportingDashboard websiteId={selectedWebsite} />
-                </motion.div>
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`reports-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <ReportingDashboard websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'settings' && selectedWebsite && (

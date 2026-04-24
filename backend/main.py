@@ -116,7 +116,24 @@ async def auth_middleware(request: Request, call_next):
         del active_sessions[token]
         return JSONResponse(status_code=401, content={"detail": "Session expired"})
 
-    return await call_next(request)
+    response = await call_next(request)
+
+    # ─── Add cache headers for GET requests ───
+    if request.method == "GET":
+        # Cache overview and summary data for 2 minutes (stale-while-revalidate)
+        if "/overview" in path or "/full-summary" in path or "/summary" in path:
+            response.headers["Cache-Control"] = "private, max-age=120, stale-while-revalidate=300"
+        # Cache static data (websites list) for 5 minutes
+        elif path == "/websites" or path.startswith("/api/websites/") and path.endswith("/automation-summary"):
+            response.headers["Cache-Control"] = "private, max-age=300"
+        # Cache audit history for 1 hour
+        elif "/history" in path:
+            response.headers["Cache-Control"] = "private, max-age=3600"
+        # Default: no cache for everything else
+        else:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
+    return response
 
 
 @app.post("/api/auth/login")
