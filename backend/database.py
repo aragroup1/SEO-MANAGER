@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Text, JSON, Boolean, ForeignKey, text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 
+# Load .env from current dir or parent dir (project root)
 load_dotenv()
+if not os.getenv("DATABASE_URL"):
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://seo_user:seo_password@localhost/seo_tool")
 
