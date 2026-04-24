@@ -1,4 +1,4 @@
-// frontend/app/page.tsx
+// frontend/app/page.tsx — Premium Ethereal Glass Dashboard
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -8,7 +8,8 @@ import {
   CheckCircle, XCircle, AlertCircle, Settings, Link2,
   BarChart3, Calendar, Users, FileSearch, FileText, Sparkles,
   Shield, Gauge, Award, Target, Rocket, Eye, Activity, Trophy,
-  ChevronDown, Menu, X, MessageSquare, Lock, LogOut
+  ChevronDown, Menu, X, MessageSquare, Lock, LogOut,
+  ChevronRight, Compass, Layers, Wand2
 } from 'lucide-react';
 import ApprovalQueue from '@/components/ApprovalQueue';
 import ErrorMonitor from '@/components/ErrorMonitor';
@@ -29,10 +30,16 @@ interface Website {
   domain: string;
   site_type: string;
   health_score: number | null;
+  autonomy_mode?: string;
 }
 
+const springTransition = { type: "spring", stiffness: 100, damping: 20 };
+const fadeUpVariants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.32, 0.72, 0, 1] } }
+};
+
 export default function Dashboard() {
-  // ─── Auth State ───
   const [authChecking, setAuthChecking] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [authRequired, setAuthRequired] = useState(true);
@@ -41,7 +48,6 @@ export default function Dashboard() {
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
 
-  // ─── App State ───
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedWebsite, setSelectedWebsite] = useState<number | null>(null);
   const [websites, setWebsites] = useState<Website[]>([]);
@@ -50,8 +56,6 @@ export default function Dashboard() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
-
-  // ─── Auth helpers ───
   const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('seo_token') || '' : '';
 
   const checkAuth = useCallback(async () => {
@@ -66,7 +70,6 @@ export default function Dashboard() {
         setAuthenticated(d.authenticated || !d.auth_required);
       }
     } catch {
-      // Backend down — skip auth
       setAuthenticated(true);
       setAuthRequired(false);
     } finally { setAuthChecking(false); }
@@ -103,35 +106,26 @@ export default function Dashboard() {
     setAuthenticated(false);
   };
 
-  // Expose token globally so components can use it
   useEffect(() => {
     if (typeof window !== 'undefined') {
       (window as any).__seoToken = getToken;
-
-      // Intercept all fetch calls to add auth header
       const originalFetch = window.fetch;
       window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
-        // Only add token to our API calls
         if (url.includes('/api/') || url.includes('/websites')) {
           const token = getToken();
           if (token) {
             init = init || {};
-            init.headers = {
-              ...init.headers,
-              'Authorization': `Bearer ${token}`,
-            };
+            init.headers = { ...init.headers, 'Authorization': `Bearer ${token}` };
           }
         }
         const response = await originalFetch(input, init);
-        // If we get 401, redirect to login
         if (response.status === 401 && !url.includes('/auth/')) {
           localStorage.removeItem('seo_token');
           setAuthenticated(false);
         }
         return response;
       };
-
       return () => { window.fetch = originalFetch; };
     }
   }, [authenticated]);
@@ -145,16 +139,9 @@ export default function Dashboard() {
         const data = await response.json();
         const list = Array.isArray(data) ? data : [];
         setWebsites(list);
-        if (!selectedWebsite && list.length > 0) {
-          setSelectedWebsite(list[0].id);
-        }
-        if (selectedWebsite && !list.find((w: Website) => w.id === selectedWebsite) && list.length > 0) {
-          setSelectedWebsite(list[0].id);
-        }
+        if (!selectedWebsite && list.length > 0) setSelectedWebsite(list[0].id);
       }
-    } catch (error) {
-      console.error('Error fetching websites:', error);
-    }
+    } catch (error) { console.error('Error fetching websites:', error); }
   }, [API_URL, selectedWebsite]);
 
   useEffect(() => { if (authenticated) fetchWebsites(); }, [authenticated]);
@@ -182,31 +169,31 @@ export default function Dashboard() {
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
-    { id: 'overview', label: 'Overview', icon: BarChart3 },
-    { id: 'websites', label: 'Websites', icon: Globe },
+    { id: 'overview', label: 'Overview', icon: Compass },
+    { id: 'websites', label: 'Websites', icon: Layers },
     { id: 'divider1', label: '', icon: null },
-    { id: 'audit', label: 'Site Audit', icon: Activity },
-    { id: 'keywords', label: 'Keywords', icon: Search },
+    { id: 'audit', label: 'Site Audit', icon: FileSearch },
+    { id: 'keywords', label: 'Keywords', icon: Target },
     { id: 'road-to-one', label: 'Road to #1', icon: Trophy },
-    { id: 'issues', label: 'Issues & Fixes', icon: Sparkles },
+    { id: 'issues', label: 'Issues & Fixes', icon: Wand2 },
     { id: 'divider2', label: '', icon: null },
     { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
     { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
-    { id: 'content', label: 'Content Writer', icon: Calendar },
+    { id: 'content', label: 'Content Writer', icon: FileText },
     { id: 'competitors', label: 'Competitors', icon: Users },
     { id: 'divider3', label: '', icon: null },
-    { id: 'reports', label: 'Reports', icon: FileText },
+    { id: 'reports', label: 'Reports', icon: BarChart3 },
   ];
 
   // ─── Auth Loading ───
   if (authChecking) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-[#050505] flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <Shield className="w-6 h-6 text-white" />
+          <div className="w-12 h-12 rounded-2xl bg-[#0f0f12] border border-white/[0.06] flex items-center justify-center mx-auto mb-4">
+            <Shield className="w-6 h-6 text-[#7c6cf9]" />
           </div>
-          <p className="text-gray-400 text-sm">Checking authentication...</p>
+          <p className="text-[#52525b] text-sm">Checking authentication...</p>
         </div>
       </div>
     );
@@ -215,50 +202,40 @@ export default function Dashboard() {
   // ─── Login Screen ───
   if (authRequired && !authenticated) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center">
-        <div className="fixed inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob"></div>
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000"></div>
-        </div>
+      <div className="min-h-[100dvh] bg-[#050505] flex items-center justify-center relative">
         <div className="relative z-10 w-full max-w-sm mx-4">
-          <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-8 border border-white/10 shadow-2xl">
+          <div className="card-liquid p-8">
             <div className="text-center mb-6">
-              <div className="w-14 h-14 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl flex items-center justify-center mx-auto mb-4">
-                <Lock className="w-7 h-7 text-white" />
+              <div className="w-14 h-14 rounded-2xl bg-[#0f0f12] border border-white/[0.06] flex items-center justify-center mx-auto mb-4">
+                <Lock className="w-7 h-7 text-[#7c6cf9]" />
               </div>
-              <h1 className="text-2xl font-bold text-white">SEO Intelligence</h1>
-              <p className="text-gray-400 text-sm mt-1">Sign in to access your dashboard</p>
+              <h1 className="text-2xl font-bold text-[#f5f5f7] tracking-tight">SEO Intelligence</h1>
+              <p className="text-[#52525b] text-sm mt-1">Sign in to access your dashboard</p>
             </div>
-
             <div className="space-y-4">
               <div>
-                <label className="block text-gray-400 text-xs mb-1.5">Username</label>
+                <label className="block text-[#52525b] text-xs mb-1.5 font-medium">Username</label>
                 <input type="text" value={loginUsername} onChange={e => setLoginUsername(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleLogin()}
                   placeholder="Username" autoFocus
-                  className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm" />
+                  className="w-full" />
               </div>
               <div>
-                <label className="block text-gray-400 text-xs mb-1.5">Password</label>
+                <label className="block text-[#52525b] text-xs mb-1.5 font-medium">Password</label>
                 <input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleLogin()}
-                  placeholder="Password"
-                  className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm" />
+                  placeholder="Password" className="w-full" />
               </div>
-
               {loginError && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">
                   <p className="text-red-400 text-xs">{loginError}</p>
                 </div>
               )}
-
               <button onClick={handleLogin} disabled={loginLoading || !loginUsername || !loginPassword}
-                className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 rounded-lg font-medium hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                className="w-full btn-premium justify-center disabled:opacity-50">
                 {loginLoading ? (
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <>Sign In</>
-                )}
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                ) : 'Sign In'}
               </button>
             </div>
           </div>
@@ -268,82 +245,58 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
-      {/* Animated Background */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-pink-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-4000"></div>
-      </div>
-
-      <div className="relative z-10 flex min-h-screen">
+    <div className="min-h-[100dvh] bg-[#050505] relative">
+      <div className="relative z-10 flex min-h-[100dvh]">
         {/* ─── Left Sidebar ─── */}
-        <aside className={`fixed left-0 top-0 h-full z-30 border-r border-white/10 backdrop-blur-xl bg-gray-900/80 transition-all duration-300 flex flex-col ${
-          sidebarCollapsed ? 'w-16' : 'w-56'
+        <aside className={`fixed left-0 top-0 h-full z-30 border-r border-white/[0.06] bg-[#0a0a0a]/80 backdrop-blur-2xl transition-all duration-500 flex flex-col ${
+          sidebarCollapsed ? 'w-16' : 'w-60'
         }`}>
           {/* Logo */}
-          <div className="p-4 border-b border-white/10 flex items-center gap-3">
-            <motion.div
-              initial={{ rotate: 0 }}
-              animate={{ rotate: 360 }}
-              transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-              className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center shrink-0"
-            >
-              <Rocket className="w-5 h-5 text-white" />
-            </motion.div>
+          <div className="p-4 border-b border-white/[0.06] flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-[#0f0f12] border border-white/[0.06] flex items-center justify-center shrink-0">
+              <Rocket className="w-4 h-4 text-[#7c6cf9]" />
+            </div>
             {!sidebarCollapsed && (
               <div className="min-w-0">
-                <h1 className="text-sm font-bold text-white leading-tight">SEO Intelligence</h1>
-                <p className="text-purple-400 text-[10px]">AI-Powered</p>
+                <h1 className="text-sm font-bold text-[#f5f5f7] leading-tight tracking-tight">SEO Intelligence</h1>
+                <p className="text-[#7c6cf9] text-[10px] font-medium tracking-wide">AI-POWERED</p>
               </div>
             )}
           </div>
 
           {/* Website Selector */}
           {websites.length > 0 && !sidebarCollapsed && (
-            <div className="px-3 py-3 border-b border-white/10">
+            <div className="px-3 py-3 border-b border-white/[0.06]">
               <div className="relative">
-                <button
-                  onClick={() => setShowWebsitePicker(!showWebsitePicker)}
-                  className="w-full flex items-center gap-2 bg-white/10 rounded-lg px-3 py-2 text-white hover:bg-white/15 transition-all text-left"
-                >
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${selectedSite?.health_score ? (selectedSite.health_score >= 70 ? 'bg-green-400' : selectedSite.health_score >= 50 ? 'bg-yellow-400' : 'bg-red-400') : 'bg-gray-500'}`} />
-                  <span className="text-xs font-medium truncate flex-1">
-                    {selectedSite?.domain || 'Select Website'}
-                  </span>
-                  <ChevronDown className={`w-3 h-3 text-gray-400 transition-transform ${showWebsitePicker ? 'rotate-180' : ''}`} />
+                <button onClick={() => setShowWebsitePicker(!showWebsitePicker)}
+                  className="w-full flex items-center gap-2 bg-white/[0.03] hover:bg-white/[0.06] rounded-xl px-3 py-2.5 text-[#f5f5f7] transition-all text-left border border-white/[0.06]">
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${selectedSite?.health_score ? (selectedSite.health_score >= 70 ? 'bg-[#4ade80]' : selectedSite.health_score >= 50 ? 'bg-[#fbbf24]' : 'bg-[#f87171]') : 'bg-[#52525b]'}`} />
+                  <span className="text-xs font-medium truncate flex-1">{selectedSite?.domain || 'Select Website'}</span>
+                  <ChevronDown className={`w-3 h-3 text-[#52525b] transition-transform ${showWebsitePicker ? 'rotate-180' : ''}`} />
                 </button>
-
                 <AnimatePresence>
                   {showWebsitePicker && (
                     <>
                       <div className="fixed inset-0 z-30" onClick={() => setShowWebsitePicker(false)} />
-                      <motion.div
-                        initial={{ opacity: 0, y: -5 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -5 }}
-                        className="absolute left-0 right-0 top-full mt-1 z-40 bg-gray-900/98 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl overflow-hidden"
-                      >
+                      <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
+                        className="absolute left-0 right-0 top-full mt-1 z-40 card-liquid overflow-hidden">
                         <div className="p-1.5 max-h-60 overflow-y-auto">
                           {websites.map(site => (
-                            <button
-                              key={site.id}
+                            <button key={site.id}
                               onClick={() => { setSelectedWebsite(site.id); setShowWebsitePicker(false); }}
-                              className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-all text-left ${
-                                selectedWebsite === site.id ? 'bg-purple-500/20 text-white' : 'text-gray-300 hover:bg-white/10'
-                              }`}
-                            >
-                              <div className={`w-2 h-2 rounded-full shrink-0 ${site.health_score ? (site.health_score >= 70 ? 'bg-green-400' : site.health_score >= 50 ? 'bg-yellow-400' : 'bg-red-400') : 'bg-gray-500'}`} />
+                              className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-xl transition-all text-left ${
+                                selectedWebsite === site.id ? 'bg-[#7c6cf9]/10 text-[#f5f5f7]' : 'text-[#a1a1aa] hover:bg-white/[0.03]'
+                              }`}>
+                              <div className={`w-2 h-2 rounded-full shrink-0 ${site.health_score ? (site.health_score >= 70 ? 'bg-[#4ade80]' : site.health_score >= 50 ? 'bg-[#fbbf24]' : 'bg-[#f87171]') : 'bg-[#52525b]'}`} />
                               <div className="flex-1 min-w-0">
                                 <p className="text-xs font-medium truncate">{site.domain}</p>
-                                <p className="text-[10px] text-gray-500 capitalize">{site.site_type}</p>
+                                <p className="text-[10px] text-[#52525b] capitalize">{site.site_type}</p>
                               </div>
                               {site.health_score && (
-                                <span className={`text-xs font-bold ${site.health_score >= 70 ? 'text-green-400' : site.health_score >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                <span className={`text-xs font-bold ${site.health_score >= 70 ? 'text-[#4ade80]' : site.health_score >= 50 ? 'text-[#fbbf24]' : 'text-[#f87171]'}`}>
                                   {Math.round(site.health_score)}
                                 </span>
                               )}
-                              {selectedWebsite === site.id && <CheckCircle className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
                             </button>
                           ))}
                         </div>
@@ -359,22 +312,18 @@ export default function Dashboard() {
           <nav className="flex-1 py-2 px-2 overflow-y-auto">
             {navItems.map((item) => {
               if (item.id.startsWith('divider')) {
-                return <div key={item.id} className="my-2 mx-2 border-t border-white/10" />;
+                return <div key={item.id} className="my-2 mx-2 border-t border-white/[0.06]" />;
               }
               const Icon = item.icon!;
               const isActive = activeTab === item.id;
               return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  title={sidebarCollapsed ? item.label : undefined}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all mb-0.5 ${
+                <button key={item.id} onClick={() => setActiveTab(item.id)} title={sidebarCollapsed ? item.label : undefined}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 mb-0.5 ${
                     isActive
-                      ? 'bg-gradient-to-r from-purple-500/30 to-pink-500/20 text-white border-l-2 border-purple-400'
-                      : 'text-gray-400 hover:bg-white/10 hover:text-white border-l-2 border-transparent'
-                  }`}
-                >
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-purple-400' : ''}`} />
+                      ? 'bg-[#7c6cf9]/10 text-[#f5f5f7] border border-[#7c6cf9]/20'
+                      : 'text-[#52525b] hover:bg-white/[0.03] hover:text-[#a1a1aa] border border-transparent'
+                  }`}>
+                  <Icon className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-[#7c6cf9]' : ''}`} />
                   {!sidebarCollapsed && <span>{item.label}</span>}
                 </button>
               );
@@ -382,21 +331,16 @@ export default function Dashboard() {
           </nav>
 
           {/* Bottom: Settings + Collapse */}
-          <div className="border-t border-white/10 p-2">
-            <button
-              onClick={() => setActiveTab('settings')}
-              title={sidebarCollapsed ? 'Settings' : undefined}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                activeTab === 'settings' ? 'bg-purple-500/20 text-white' : 'text-gray-400 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <Settings className={`w-4 h-4 shrink-0 ${activeTab === 'settings' ? 'text-purple-400' : ''}`} />
+          <div className="border-t border-white/[0.06] p-2">
+            <button onClick={() => setActiveTab('settings')} title={sidebarCollapsed ? 'Settings' : undefined}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeTab === 'settings' ? 'bg-[#7c6cf9]/10 text-[#f5f5f7] border border-[#7c6cf9]/20' : 'text-[#52525b] hover:bg-white/[0.03] hover:text-[#a1a1aa]'
+              }`}>
+              <Settings className={`w-4 h-4 shrink-0 ${activeTab === 'settings' ? 'text-[#7c6cf9]' : ''}`} />
               {!sidebarCollapsed && <span>Settings</span>}
             </button>
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-white/5 hover:text-gray-300 transition-all mt-1"
-            >
+            <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-[#52525b] hover:bg-white/[0.03] hover:text-[#a1a1aa] transition-all mt-1">
               {sidebarCollapsed ? <Menu className="w-4 h-4 shrink-0" /> : <X className="w-4 h-4 shrink-0" />}
               {!sidebarCollapsed && <span className="text-xs">Collapse</span>}
             </button>
@@ -404,21 +348,22 @@ export default function Dashboard() {
 
           {/* AI Status */}
           {!sidebarCollapsed && (
-            <div className="p-3 border-t border-white/10">
+            <div className="p-3 border-t border-white/[0.06]">
               <div className="flex items-center gap-2">
                 <div className="relative">
-                  <Bot className="w-4 h-4 text-green-400" />
-                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-green-400 rounded-full animate-ping"></span>
+                  <Bot className="w-4 h-4 text-[#4ade80]" />
+                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-[#4ade80] rounded-full animate-ping" />
                 </div>
-                <p className="text-[10px] text-gray-500 truncate">{aiStatus.message}</p>
+                <p className="text-[10px] text-[#52525b] truncate">{aiStatus.message}</p>
               </div>
             </div>
           )}
 
           {/* Logout */}
           {authRequired && (
-            <div className="p-3 border-t border-white/10">
-              <button onClick={handleLogout} className="w-full flex items-center gap-2 text-gray-500 hover:text-red-400 transition-all px-2 py-1.5 rounded-lg hover:bg-white/5">
+            <div className="p-3 border-t border-white/[0.06]">
+              <button onClick={handleLogout}
+                className="w-full flex items-center gap-2 text-[#52525b] hover:text-[#f87171] transition-all px-2 py-1.5 rounded-xl hover:bg-white/[0.03]">
                 <LogOut className="w-4 h-4 shrink-0" />
                 {!sidebarCollapsed && <span className="text-xs">Sign Out</span>}
               </button>
@@ -427,43 +372,45 @@ export default function Dashboard() {
         </aside>
 
         {/* ─── Main Content ─── */}
-        <main className={`flex-1 transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-56'}`}>
-          <div className="max-w-7xl mx-auto px-6 py-6">
+        <main className={`flex-1 transition-all duration-500 ${sidebarCollapsed ? 'ml-16' : 'ml-60'}`}>
+          <div className="max-w-[1400px] mx-auto px-6 py-6">
 
             {needsWebsite && !selectedWebsite && websites.length === 0 && (
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 border border-white/20 text-center">
-                <Globe className="w-12 h-12 text-purple-400 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-white mb-2">No Websites Added</h3>
-                <p className="text-purple-300 mb-6">Add a website first to start using this feature.</p>
-                <button onClick={() => setActiveTab('websites')}
-                  className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-lg font-medium">
-                  Go to Websites
+              <motion.div variants={fadeUpVariants} initial="hidden" animate="visible"
+                className="card-liquid p-12 text-center">
+                <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
+                <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">No Websites Added</h3>
+                <p className="text-[#52525b] mb-6">Add a website first to start using this feature.</p>
+                <button onClick={() => setActiveTab('websites')} className="btn-premium">
+                  Go to Websites <ChevronRight className="w-4 h-4" />
                 </button>
-              </div>
+              </motion.div>
             )}
 
             {needsWebsite && !selectedWebsite && websites.length > 0 && (
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 border border-white/20 text-center">
-                <Globe className="w-12 h-12 text-purple-400 mx-auto mb-4" />
-                <h3 className="text-xl font-bold text-white mb-2">Select a Website</h3>
-                <p className="text-purple-300 mb-6">Choose a website from the sidebar to view its data.</p>
-              </div>
+              <motion.div variants={fadeUpVariants} initial="hidden" animate="visible"
+                className="card-liquid p-12 text-center">
+                <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
+                <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">Select a Website</h3>
+                <p className="text-[#52525b]">Choose a website from the sidebar to view its data.</p>
+              </motion.div>
             )}
 
             <AnimatePresence mode="wait">
               {activeTab === 'overview' && (
-                <motion.div key="overview" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="space-y-6">
+                <motion.div key="overview" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }} className="space-y-6">
                   {/* AI Overseer */}
                   {websites.length > 0 && selectedWebsite && (
-                    <div className="bg-gradient-to-r from-cyan-500/10 to-purple-500/10 backdrop-blur-md rounded-2xl p-5 border border-cyan-500/20">
-                      <div className="flex items-center justify-between">
+                    <div className="bezel-outer">
+                      <div className="bezel-inner p-5 flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-purple-500 rounded-xl flex items-center justify-center">
-                            <Bot className="w-6 h-6 text-white" />
+                          <div className="w-10 h-10 rounded-xl bg-[#7c6cf9]/10 border border-[#7c6cf9]/20 flex items-center justify-center">
+                            <Bot className="w-5 h-5 text-[#7c6cf9]" />
                           </div>
                           <div>
-                            <h3 className="text-white font-semibold">AI Overseer</h3>
-                            <p className="text-gray-400 text-xs">Runs: audit → keywords → GEO scan → fixes → strategy refresh</p>
+                            <h3 className="text-[#f5f5f7] font-semibold text-sm">AI Overseer</h3>
+                            <p className="text-[#52525b] text-xs">Runs: audit → keywords → GEO scan → fixes → strategy refresh</p>
                           </div>
                         </div>
                         <button onClick={async () => {
@@ -471,10 +418,8 @@ export default function Dashboard() {
                             await fetch(`${API_URL}/api/overseer/${selectedWebsite}/run`, { method: 'POST' });
                             alert('AI Overseer started. This will take 2-5 minutes. Check Issues & Fixes for results.');
                           } catch { alert('Failed to start overseer'); }
-                        }}
-                          className="bg-gradient-to-r from-cyan-500 to-purple-500 text-white px-5 py-2.5 rounded-lg font-medium hover:shadow-lg hover:shadow-cyan-500/25 transition-all flex items-center gap-2">
-                          <Zap className="w-4 h-4" />
-                          Run Full Cycle
+                        }} className="btn-premium">
+                          <Zap className="w-4 h-4" /> Run Full Cycle
                         </button>
                       </div>
                     </div>
@@ -483,45 +428,49 @@ export default function Dashboard() {
                   {websites.length > 0 ? (
                     <OverviewDashboard onSelectWebsite={handleSelectWebsite} selectedWebsite={selectedWebsite} />
                   ) : (
-                    <div className="bg-white/10 backdrop-blur-md rounded-2xl p-12 border border-white/20 text-center">
-                      <Globe className="w-12 h-12 text-purple-400 mx-auto mb-4" />
-                      <h3 className="text-xl font-bold text-white mb-2">Welcome to SEO Intelligence</h3>
-                      <p className="text-purple-300 mb-6">Add your first website to start tracking SEO performance.</p>
-                      <button onClick={() => setActiveTab('websites')}
-                        className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-lg font-medium">
-                        Add Website
+                    <motion.div variants={fadeUpVariants} initial="hidden" animate="visible" className="card-liquid p-12 text-center">
+                      <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
+                      <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">Welcome to SEO Intelligence</h3>
+                      <p className="text-[#52525b] mb-6">Add your first website to start tracking SEO performance.</p>
+                      <button onClick={() => setActiveTab('websites')} className="btn-premium">
+                        Add Website <ChevronRight className="w-4 h-4" />
                       </button>
-                    </div>
+                    </motion.div>
                   )}
                 </motion.div>
               )}
 
               {activeTab === 'websites' && (
-                <motion.div key="websites" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key="websites" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <WebsiteManager onSelectWebsite={handleSelectWebsite} onWebsitesChange={fetchWebsites} />
                 </motion.div>
               )}
 
               {activeTab === 'audit' && selectedWebsite && (
-                <motion.div key={`audit-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`audit-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <AuditDashboard websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'keywords' && selectedWebsite && (
-                <motion.div key={`keywords-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`keywords-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <KeywordTracker key={`kt-${selectedWebsite}`} websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'road-to-one' && selectedWebsite && (
-                <motion.div key={`r2o-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`r2o-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <RoadToOne websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'issues' && selectedWebsite && (
-                <motion.div key={`issues-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`issues-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <div className="space-y-6">
                     <ErrorMonitor websiteId={selectedWebsite} />
                     <ApprovalQueue websiteId={selectedWebsite} />
@@ -530,37 +479,43 @@ export default function Dashboard() {
               )}
 
               {activeTab === 'content' && selectedWebsite && (
-                <motion.div key={`content-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`content-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <ContentWriter websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'competitors' && selectedWebsite && (
-                <motion.div key={`competitors-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`competitors-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <CompetitorAnalysis websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'ai-search' && selectedWebsite && (
-                <motion.div key={`geo-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`geo-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <GEODashboard websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'strategist' && selectedWebsite && (
-                <motion.div key={`strategist-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`strategist-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <AIStrategist websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'reports' && selectedWebsite && (
-                <motion.div key={`reports-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`reports-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <ReportingDashboard websiteId={selectedWebsite} />
                 </motion.div>
               )}
 
               {activeTab === 'settings' && selectedWebsite && (
-                <motion.div key={`settings-${selectedWebsite}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+                <motion.div key={`settings-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                   <SettingsPanel websiteId={selectedWebsite} />
                 </motion.div>
               )}

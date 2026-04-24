@@ -38,6 +38,8 @@ interface FixSummary {
   by_status: { pending: number; approved: number; rejected: number; applied: number; failed: number; manual: number };
   by_type: Record<string, number>;
   by_severity: Record<string, number>;
+  auto_approved: number;
+  auto_applied: number;
 }
 
 export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
