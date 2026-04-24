@@ -1677,20 +1677,49 @@ async def generate_fixes_for_website(website_id: int) -> Dict[str, Any]:
 
         # Save fixes to database
         saved_count = 0
+        auto_approved_count = 0
+        auto_applied_count = 0
         for fix_data in all_fixes:
             fix_data.pop("extra", None)
             proposed_fix = ProposedFix(**fix_data)
             db.add(proposed_fix)
+            db.flush()  # Get the ID
             saved_count += 1
+
+            # ─── Autonomy mode: auto-approve safe fixes ───
+            from automation_config import should_auto_approve, should_auto_apply
+            if should_auto_approve(proposed_fix, website.autonomy_mode):
+                proposed_fix.status = "approved"
+                proposed_fix.auto_approved_at = datetime.utcnow()
+                auto_approved_count += 1
+                db.commit()
+                print(f"[FixEngine] Auto-approved fix {proposed_fix.id} ({proposed_fix.fix_type}) for {website.domain}")
+
+                # ─── Autonomy mode: auto-apply approved fixes ───
+                if should_auto_apply(proposed_fix, website.autonomy_mode):
+                    try:
+                        apply_result = await apply_approved_fix(proposed_fix.id)
+                        if apply_result.get("success"):
+                            proposed_fix.auto_applied = True
+                            auto_applied_count += 1
+                            print(f"[FixEngine] Auto-applied fix {proposed_fix.id} ({proposed_fix.fix_type}) for {website.domain}")
+                        else:
+                            print(f"[FixEngine] Auto-apply failed for fix {proposed_fix.id}: {apply_result.get('message', 'unknown error')}")
+                    except Exception as e:
+                        print(f"[FixEngine] Auto-apply error for fix {proposed_fix.id}: {e}")
 
         db.commit()
         print(f"[FixEngine] Generated {saved_count} proposed fixes for website {website_id} (batch: {batch_id})")
+        if auto_approved_count:
+            print(f"[FixEngine]   Auto-approved: {auto_approved_count}, Auto-applied: {auto_applied_count}")
 
         return {
             "batch_id": batch_id,
             "total_fixes": saved_count,
+            "auto_approved": auto_approved_count,
+            "auto_applied": auto_applied_count,
             "fix_types": _count_by_type(all_fixes),
-            "message": "Generated " + str(saved_count) + " fix proposals. Review and approve them in the Approval Queue."
+            "message": f"Generated {saved_count} fix proposals. Auto-approved: {auto_approved_count}, Auto-applied: {auto_applied_count}. Review remaining in the Approval Queue."
         }
 
     except Exception as e:
@@ -1780,6 +1809,17 @@ async def apply_approved_fix(fix_id: int) -> Dict[str, Any]:
         else:
             fix.status = "failed"
             fix.error_message = message
+            # ─── Auto-retry failed fixes in ultra mode ───
+            if website and website.autonomy_mode == "ultra":
+                retry_count = getattr(fix, '_retry_count', 0)
+                if retry_count < 3:
+                    import asyncio
+                    wait_seconds = 5 * (3 ** retry_count)  # 5s, 15s, 45s
+                    print(f"[FixEngine] Ultra mode: retrying fix {fix.id} in {wait_seconds}s (attempt {retry_count + 1}/3)")
+                    await asyncio.sleep(wait_seconds)
+                    fix._retry_count = retry_count + 1
+                    db.commit()
+                    return await apply_approved_fix(fix.id)
 
         db.commit()
         return {"success": success, "message": message, "status": fix.status}

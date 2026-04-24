@@ -387,3 +387,67 @@ def _fallback_summary(report: Dict) -> str:
     if fixes.get("applied_this_month",0) > 0:
         parts.append(f"{fixes['applied_this_month']} fixes applied. {fixes.get('pending',0)} pending.")
     return " ".join(parts) if parts else "Run an audit and sync keywords to generate a report."
+
+
+async def generate_automation_summary(website_id: int, days: int = 7) -> Dict[str, Any]:
+    """Generate a summary of auto-approved and auto-applied fixes for a website."""
+    db = SessionLocal()
+    try:
+        website = db.query(Website).filter(Website.id == website_id).first()
+        if not website:
+            return {"error": "Website not found"}
+
+        since = datetime.utcnow() - timedelta(days=days)
+
+        # Auto-approved fixes
+        auto_approved = db.query(ProposedFix).filter(
+            ProposedFix.website_id == website_id,
+            ProposedFix.auto_approved_at >= since
+        ).all()
+
+        # Auto-applied fixes
+        auto_applied = db.query(ProposedFix).filter(
+            ProposedFix.website_id == website_id,
+            ProposedFix.auto_applied == True,
+            ProposedFix.applied_at >= since
+        ).all()
+
+        # Failed fixes
+        failed = db.query(ProposedFix).filter(
+            ProposedFix.website_id == website_id,
+            ProposedFix.status == "failed",
+            ProposedFix.updated_at >= since
+        ).all()
+
+        # Count by type
+        approved_by_type = {}
+        for f in auto_approved:
+            approved_by_type[f.fix_type] = approved_by_type.get(f.fix_type, 0) + 1
+
+        applied_by_type = {}
+        for f in auto_applied:
+            applied_by_type[f.fix_type] = applied_by_type.get(f.fix_type, 0) + 1
+
+        return {
+            "domain": website.domain,
+            "autonomy_mode": website.autonomy_mode,
+            "period_days": days,
+            "generated_at": datetime.utcnow().isoformat(),
+            "auto_approved": {
+                "total": len(auto_approved),
+                "by_type": approved_by_type,
+            },
+            "auto_applied": {
+                "total": len(auto_applied),
+                "by_type": applied_by_type,
+            },
+            "failed": {
+                "total": len(failed),
+                "fixes": [{"id": f.id, "fix_type": f.fix_type, "error": f.error_message} for f in failed[:10]],
+            },
+            "summary_text": f"{website.domain}: {len(auto_applied)} fixes auto-applied in the last {days} days. {len(failed)} failed. Mode: {website.autonomy_mode}.",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        db.close()

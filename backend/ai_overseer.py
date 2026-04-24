@@ -125,13 +125,18 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
                     from fix_engine import generate_fixes_for_website
                     fix_result = await generate_fixes_for_website(website.id)
                     platform_fixes = fix_result.get("total_fixes", 0)
+                    auto_approved = fix_result.get("auto_approved", 0)
+                    auto_applied = fix_result.get("auto_applied", 0)
                     site_result["actions"].append({
                         "step": "platform_fix_scan",
                         "status": "completed",
                         "platform": website.site_type,
                         "fixes_generated": platform_fixes,
+                        "auto_approved": auto_approved,
+                        "auto_applied": auto_applied,
+                        "autonomy_mode": website.autonomy_mode,
                     })
-                    print(f"[Overseer]   Platform scan done: {platform_fixes} fixes")
+                    print(f"[Overseer]   Platform scan done: {platform_fixes} fixes (auto-approved: {auto_approved}, auto-applied: {auto_applied})")
                 except Exception as e:
                     print(f"[Overseer]   Platform scan failed: {e}")
                     site_result["actions"].append({"step": "platform_fix_scan", "status": "failed", "error": str(e)})

@@ -28,6 +28,8 @@ interface Fix {
   batch_id: string;
   error_message: string | null;
   applied_at: string | null;
+  auto_approved_at: string | null;
+  auto_applied: boolean;
   created_at: string;
 }
 
@@ -332,6 +334,21 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
         </div>
       )}
 
+      {/* Auto-Approval Stats Banner */}
+      {summary && (summary.auto_approved > 0 || summary.auto_applied > 0) && (
+        <div className="bg-gradient-to-r from-purple-500/10 to-green-500/10 border border-purple-500/20 rounded-xl p-4 flex items-center gap-4">
+          <Sparkles className="w-5 h-5 text-purple-400" />
+          <div className="flex-1">
+            <p className="text-white text-sm font-medium">
+              Automation Active
+            </p>
+            <p className="text-gray-400 text-xs">
+              {summary.auto_approved} fixes auto-approved, {summary.auto_applied} auto-applied this cycle
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Filters & Batch Actions */}
       {fixes.length > 0 && (
         <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
@@ -412,6 +429,11 @@ export default function ApprovalQueue({ websiteId }: { websiteId: number }) {
                         <span className={`text-xs px-2 py-0.5 rounded-full border ${getStatusColor(fix.status)}`}>
                           {fix.status}
                         </span>
+                        {fix.auto_approved_at && (
+                          <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/30">
+                            auto
+                          </span>
+                        )}
                         <span className="text-xs text-gray-500 bg-white/5 px-2 py-0.5 rounded-full">
                           {getFixTypeLabel(fix.fix_type)}
                         </span>

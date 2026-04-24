@@ -191,20 +191,49 @@ async def scan_and_generate_geo_fixes(website_id: int) -> Dict[str, Any]:
 
         # Save fixes to database
         saved = 0
+        auto_approved_count = 0
+        auto_applied_count = 0
         for fix_data in all_fixes:
             fix_data.pop("html", None)
             proposed_fix = ProposedFix(**fix_data)
             db.add(proposed_fix)
+            db.flush()
             saved += 1
+
+            # ─── Autonomy mode: auto-approve GEO fixes ───
+            from automation_config import should_auto_approve, should_auto_apply
+            from fix_engine import apply_approved_fix
+            if should_auto_approve(proposed_fix, website.autonomy_mode):
+                proposed_fix.status = "approved"
+                proposed_fix.auto_approved_at = datetime.utcnow()
+                auto_approved_count += 1
+                db.commit()
+                print(f"[GEO Fix] Auto-approved fix {proposed_fix.id} ({proposed_fix.fix_type}) for {domain}")
+
+                if should_auto_apply(proposed_fix, website.autonomy_mode):
+                    try:
+                        apply_result = await apply_approved_fix(proposed_fix.id)
+                        if apply_result.get("success"):
+                            proposed_fix.auto_applied = True
+                            auto_applied_count += 1
+                            print(f"[GEO Fix] Auto-applied fix {proposed_fix.id} ({proposed_fix.fix_type}) for {domain}")
+                        else:
+                            print(f"[GEO Fix] Auto-apply failed for fix {proposed_fix.id}: {apply_result.get('message', 'unknown')}")
+                    except Exception as e:
+                        print(f"[GEO Fix] Auto-apply error for fix {proposed_fix.id}: {e}")
 
         db.commit()
         print(f"[GEO Fix] Generated {saved} GEO fix proposals for {domain}")
+        if auto_approved_count:
+            print(f"[GEO Fix]   Auto-approved: {auto_approved_count}, Auto-applied: {auto_applied_count}")
 
         return {
             "batch_id": batch_id,
             "total_fixes": saved,
+            "auto_approved": auto_approved_count,
+            "auto_applied": auto_applied_count,
             "pages_scanned": len(pages_to_scan),
-            "message": f"Generated {saved} GEO optimization proposals. Review and approve them in Issues & Fixes."
+            "message": f"Generated {saved} GEO optimization proposals. Auto-approved: {auto_approved_count}, Auto-applied: {auto_applied_count}. Review remaining in Issues & Fixes."
         }
 
     except Exception as e:

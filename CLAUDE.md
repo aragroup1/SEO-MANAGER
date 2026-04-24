@@ -9,6 +9,13 @@ DB: Railway PostgreSQL, auto-deploys from GitHub main branch.
 
 ## Critical Rules
 
+## Response Format
+After file edits, respond ONLY with:
+✓ filename.py lines X-Y updated
+
+NO code output, NO explanations unless there's an error.
+
+
 ## Session Start Protocol
 1. Read CLAUDE.md only
 2. State the task in one sentence

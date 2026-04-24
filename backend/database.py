@@ -57,6 +57,7 @@ class Website(Base):
     last_audit = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
+    autonomy_mode = Column(String, default="manual")  # manual | smart | ultra
     owner = relationship("User", back_populates="websites")
     audits = relationship("AuditReport", back_populates="website", cascade="all, delete-orphan")
     content_items = relationship("ContentItem", back_populates="website", cascade="all, delete-orphan")
@@ -150,6 +151,8 @@ class ProposedFix(Base):
     batch_id = Column(String, nullable=True)  # Group related fixes together
     error_message = Column(Text, nullable=True)  # If application failed, why
     applied_at = Column(DateTime, nullable=True)
+    auto_approved_at = Column(DateTime, nullable=True)  # When auto-approval happened
+    auto_applied = Column(Boolean, default=False)  # True if applied by automation
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -134,6 +134,8 @@ async def get_fixes(
                 "batch_id": f.batch_id,
                 "error_message": f.error_message,
                 "applied_at": f.applied_at.isoformat() if f.applied_at else None,
+                "auto_approved_at": f.auto_approved_at.isoformat() if f.auto_approved_at else None,
+                "auto_applied": f.auto_applied,
                 "created_at": f.created_at.isoformat() if f.created_at else None,
             }
             for f in fixes
@@ -168,6 +170,17 @@ async def get_fix_summary(website_id: int, db: Session = Depends(get_db)):
         .all()
     )
 
+    # Count auto-approved fixes
+    auto_approved_count = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id,
+        ProposedFix.auto_approved_at.isnot(None)
+    ).count()
+
+    auto_applied_count = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id,
+        ProposedFix.auto_applied == True
+    ).count()
+
     return {
         "total": sum(status_counts.values()),
         "by_status": {
@@ -180,6 +193,8 @@ async def get_fix_summary(website_id: int, db: Session = Depends(get_db)):
         },
         "by_type": type_counts,
         "by_severity": severity_counts,
+        "auto_approved": auto_approved_count,
+        "auto_applied": auto_applied_count,
     }
 
 
@@ -374,6 +389,27 @@ async def batch_reject(website_id: int, request: Request, db: Session = Depends(
     db.commit()
 
     return {"rejected": count}
+
+
+@router.post("/{website_id}/auto-apply-approved")
+async def auto_apply_approved(
+    website_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Apply all approved fixes (including auto-approved) for a website."""
+    approved = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id,
+        ProposedFix.status == "approved"
+    ).all()
+    fix_ids = [f.id for f in approved]
+
+    if not fix_ids:
+        return {"message": "No approved fixes to apply"}
+
+    background_tasks.add_task(_run_apply_batch_task, fix_ids)
+
+    return {"applying": len(fix_ids), "message": f"Applying {len(fix_ids)} approved fixes in the background..."}
 
 
 @router.delete("/{website_id}/clear")

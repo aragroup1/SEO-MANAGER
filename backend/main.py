@@ -218,6 +218,7 @@ async def get_websites(user_id: Optional[int] = None, db: Session = Depends(get_
             result.append({
                 "id": w.id, "domain": w.domain, "site_type": w.site_type,
                 "monthly_traffic": w.monthly_traffic,
+                "autonomy_mode": w.autonomy_mode,
                 "health_score": latest_audit.health_score if latest_audit else None,
                 "created_at": w.created_at.isoformat() if w.created_at else None
             })
@@ -255,9 +256,14 @@ async def update_website(website_id: int, request: Request, db: Session = Depend
     if 'domain' in data: website.domain = data['domain']
     if 'monthly_traffic' in data: website.monthly_traffic = data['monthly_traffic']
     if 'site_type' in data: website.site_type = data['site_type']
+    if 'autonomy_mode' in data:
+        mode = data['autonomy_mode']
+        if mode not in ["manual", "smart", "ultra"]:
+            raise HTTPException(status_code=400, detail="autonomy_mode must be 'manual', 'smart', or 'ultra'")
+        website.autonomy_mode = mode
     db.commit()
     db.refresh(website)
-    return {"id": website.id, "domain": website.domain, "site_type": website.site_type, "monthly_traffic": website.monthly_traffic}
+    return {"id": website.id, "domain": website.domain, "site_type": website.site_type, "monthly_traffic": website.monthly_traffic, "autonomy_mode": website.autonomy_mode}
 
 # --- Audit Background Task ---
 
@@ -812,6 +818,15 @@ async def run_overseer_all(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_overseer_background, None)
     return {"status": "running", "message": "AI Overseer started for all websites."}
 
+
+@app.get("/api/websites/{website_id}/automation-summary")
+async def get_automation_summary(website_id: int, days: int = 7):
+    """Get automation summary for a website (auto-approved/applied fixes)."""
+    from reporting import generate_automation_summary
+    result = await generate_automation_summary(website_id, days)
+    return result
+
+
 # --- Overview Summary ---
 
 @app.get("/api/overview")
@@ -869,6 +884,7 @@ async def get_overview_summary(db: Session = Depends(get_db)):
         # Fixes
         summary["pending_fixes"] = db.query(ProposedFix).filter(ProposedFix.website_id == w.id, ProposedFix.status == "pending").count()
         summary["applied_fixes"] = db.query(ProposedFix).filter(ProposedFix.website_id == w.id, ProposedFix.status == "applied").count()
+        summary["autonomy_mode"] = w.autonomy_mode
 
         # Tracked keywords
         tracked = db.query(TrackedKeyword).filter(TrackedKeyword.website_id == w.id).all()
@@ -902,6 +918,17 @@ async def _run_daily_audits():
                 engine = SEOAuditEngine(w.id)
                 result = await engine.run_comprehensive_audit()
                 print(f"[DailyAudit] {w.domain}: score {result.get('health_score', 'N/A')}")
+
+                # ─── Auto-fix scan for Smart/Ultra mode sites ───
+                if w.autonomy_mode in ["smart", "ultra"] and w.site_type in ["shopify", "wordpress"]:
+                    try:
+                        print(f"[DailyAudit] {w.domain}: auto-fix scan (mode: {w.autonomy_mode})")
+                        from fix_engine import generate_fixes_for_website
+                        fix_result = await generate_fixes_for_website(w.id)
+                        print(f"[DailyAudit] {w.domain}: {fix_result.get('total_fixes', 0)} fixes generated, {fix_result.get('auto_applied', 0)} auto-applied")
+                    except Exception as e:
+                        print(f"[DailyAudit] {w.domain}: auto-fix scan failed: {e}")
+
                 await asyncio.sleep(5)  # Pause between sites
             except Exception as e:
                 print(f"[DailyAudit] {w.domain} failed: {e}")
@@ -1030,6 +1057,9 @@ async def startup_event():
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS decay_generated_at TIMESTAMP",
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS geo_audit JSON",
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS geo_audit_at TIMESTAMP",
+                "ALTER TABLE websites ADD COLUMN IF NOT EXISTS autonomy_mode VARCHAR DEFAULT 'manual'",
+                "ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS auto_approved_at TIMESTAMP",
+                "ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS auto_applied BOOLEAN DEFAULT FALSE",
             ]
             for migration in migrations:
                 try:

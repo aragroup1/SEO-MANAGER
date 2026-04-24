@@ -28,6 +28,7 @@ interface WebsiteSummary {
   clicks_change: number;
   pending_fixes: number;
   applied_fixes: number;
+  autonomy_mode?: string;
   tracked_count: number;
   tracked_keywords: { keyword: string; position: number | null; clicks: number }[];
 }
@@ -114,6 +115,15 @@ export default function OverviewDashboard({
                     <h3 className="text-white font-semibold">{site.domain}</h3>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-gray-500 capitalize">{site.site_type}</span>
+                      {site.autonomy_mode && site.autonomy_mode !== 'manual' && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                          site.autonomy_mode === 'ultra'
+                            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                            : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                        }`}>
+                          {site.autonomy_mode === 'ultra' ? 'Ultra' : 'Smart'}
+                        </span>
+                      )}
                       {site.last_audit && (
                         <span className="text-xs text-gray-600">Last audit: {new Date(site.last_audit).toLocaleDateString()}</span>
                       )}

@@ -7,7 +7,7 @@ import {
   Settings, Search, BarChart3, ShoppingCart, Layers,
   CheckCircle, XCircle, Loader2, Trash2, RefreshCw,
   ExternalLink, Clock, Shield, Bell, User, CreditCard,
-  ChevronRight, Plug, AlertTriangle
+  ChevronRight, Plug, AlertTriangle, Bot, Zap, Hand
 } from 'lucide-react';
 
 interface ConnectedIntegration {
@@ -33,6 +33,15 @@ export default function SettingsPanel({ websiteId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
+  const [autonomyMode, setAutonomyMode] = useState<string>('manual');
+  const [savingMode, setSavingMode] = useState(false);
+  const [modeStats, setModeStats] = useState({ auto_approved: 0, auto_applied: 0 });
+
+  useEffect(() => {
+    fetchConnectedIntegrations();
+    fetchAutonomyMode();
+    fetchModeStats();
+  }, [websiteId]);
 
   useEffect(() => {
     fetchConnectedIntegrations();
@@ -136,8 +145,66 @@ export default function SettingsPanel({ websiteId, onClose }: Props) {
     }
   };
 
+  const fetchAutonomyMode = async () => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/websites?user_id=1`);
+      if (response.ok) {
+        const data = await response.json();
+        const site = data.find((w: any) => w.id === websiteId);
+        if (site) setAutonomyMode(site.autonomy_mode || 'manual');
+      }
+    } catch (error) {
+      console.error('Error fetching autonomy mode:', error);
+    }
+  };
+
+  const fetchModeStats = async () => {
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/fixes/${websiteId}/summary`);
+      if (response.ok) {
+        const data = await response.json();
+        setModeStats({
+          auto_approved: data.auto_approved || 0,
+          auto_applied: data.auto_applied || 0,
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching mode stats:', error);
+    }
+  };
+
+  const updateAutonomyMode = async (mode: string) => {
+    if (mode === autonomyMode) return;
+    const confirmMsg = mode === 'ultra'
+      ? 'WARNING: Ultra mode will automatically apply ALL fixes without review. Are you sure?'
+      : mode === 'smart'
+      ? 'Smart mode will auto-approve safe fixes (alt text, meta tags, structured data). Content changes still need approval. Continue?'
+      : 'Switch to Manual mode? All fixes will require your approval.';
+    if (!confirm(confirmMsg)) return;
+
+    setSavingMode(true);
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/websites/${websiteId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ autonomy_mode: mode })
+        }
+      );
+      if (response.ok) {
+        setAutonomyMode(mode);
+      }
+    } catch (error) {
+      console.error('Error updating autonomy mode:', error);
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
   const sections = [
     { id: 'integrations', label: 'Integrations', icon: Plug },
+    { id: 'automation', label: 'Automation', icon: Bot },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'account', label: 'Account', icon: User },
     { id: 'billing', label: 'Billing', icon: CreditCard },
@@ -310,6 +377,102 @@ export default function SettingsPanel({ websiteId, onClose }: Props) {
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeSection === 'automation' && (
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Automation Mode</h3>
+                  <p className="text-gray-400 text-sm mt-1">
+                    Control how aggressively the AI applies fixes to your site
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 mb-8">
+                {[
+                  {
+                    id: 'manual',
+                    label: 'Manual',
+                    description: 'I review and approve every change before it goes live.',
+                    icon: Hand,
+                    color: 'blue',
+                  },
+                  {
+                    id: 'smart',
+                    label: 'Smart',
+                    description: 'Auto-approve safe fixes (alt text, meta tags, structured data). Content changes still need my approval.',
+                    icon: Zap,
+                    color: 'purple',
+                  },
+                  {
+                    id: 'ultra',
+                    label: 'Ultra',
+                    description: 'Apply all fixes automatically. I\'ll review the daily summary. Maximum growth mode.',
+                    icon: Bot,
+                    color: 'green',
+                  },
+                ].map((mode) => {
+                  const Icon = mode.icon;
+                  const isSelected = autonomyMode === mode.id;
+                  const colorClasses: Record<string, { bg: string; border: string; text: string; ring: string }> = {
+                    blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-400', ring: 'ring-blue-500' },
+                    purple: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-400', ring: 'ring-purple-500' },
+                    green: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-400', ring: 'ring-green-500' },
+                  };
+                  const c = colorClasses[mode.color];
+                  return (
+                    <button
+                      key={mode.id}
+                      onClick={() => updateAutonomyMode(mode.id)}
+                      disabled={savingMode}
+                      className={`w-full flex items-start gap-4 p-4 rounded-xl border transition-all text-left ${
+                        isSelected
+                          ? `${c.bg} ${c.border} ring-1 ${c.ring}`
+                          : 'bg-white/5 border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className={`p-2 rounded-lg ${c.bg} ${c.border}`}>
+                        <Icon className={`w-5 h-5 ${c.text}`} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className={`font-semibold ${isSelected ? 'text-white' : 'text-gray-300'}`}>
+                            {mode.label}
+                          </p>
+                          {isSelected && (
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${c.bg} ${c.text} border ${c.border}`}>
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-gray-500 text-sm mt-1">{mode.description}</p>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mt-1 ${
+                        isSelected ? `${c.border} ${c.bg}` : 'border-white/20'
+                      }`}>
+                        {isSelected && <div className={`w-2.5 h-2.5 rounded-full ${c.text.replace('text-', 'bg-')}`} />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                <h4 className="text-sm font-medium text-white mb-3">This Week's Automation Stats</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="text-center p-3 bg-white/5 rounded-lg">
+                    <p className="text-2xl font-bold text-purple-400">{modeStats.auto_approved}</p>
+                    <p className="text-gray-500 text-xs mt-1">Auto-Approved Fixes</p>
+                  </div>
+                  <div className="text-center p-3 bg-white/5 rounded-lg">
+                    <p className="text-2xl font-bold text-green-400">{modeStats.auto_applied}</p>
+                    <p className="text-gray-500 text-xs mt-1">Auto-Applied Fixes</p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
