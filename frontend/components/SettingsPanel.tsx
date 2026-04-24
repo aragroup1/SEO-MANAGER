@@ -7,7 +7,8 @@ import {
   Settings, Search, BarChart3, ShoppingCart, Layers,
   CheckCircle, XCircle, Loader2, Trash2, RefreshCw,
   ExternalLink, Clock, Shield, Bell, User, CreditCard,
-  ChevronRight, Plug, AlertTriangle, Bot, Zap, Hand
+  ChevronRight, Plug, AlertTriangle, Bot, Zap, Hand,
+  Globe, Plus
 } from 'lucide-react';
 
 interface ConnectedIntegration {
@@ -205,6 +206,7 @@ export default function SettingsPanel({ websiteId, onClose }: Props) {
   const sections = [
     { id: 'integrations', label: 'Integrations', icon: Plug },
     { id: 'automation', label: 'Automation', icon: Bot },
+    { id: 'websites', label: 'Websites', icon: Globe },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'account', label: 'Account', icon: User },
     { id: 'billing', label: 'Billing', icon: CreditCard },
@@ -521,7 +523,164 @@ export default function SettingsPanel({ websiteId, onClose }: Props) {
               <p className="text-gray-400 text-sm">Billing management coming soon with Stripe integration.</p>
             </div>
           )}
+
+          {activeSection === 'websites' && (
+            <WebsiteManagerSection />
+          )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Inline Website Manager (simplified) ───
+function WebsiteManagerSection() {
+  const [websites, setWebsites] = useState<any[]>([]);
+  const [fetching, setFetching] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [formData, setFormData] = useState({ domain: '', site_type: 'custom', shopify_store_url: '', shopify_access_token: '' });
+  const [adding, setAdding] = useState(false);
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
+  useEffect(() => {
+    fetchWebsites();
+  }, []);
+
+  const fetchWebsites = async () => {
+    setFetching(true);
+    try {
+      const r = await fetch(`${API_URL}/websites`);
+      if (r.ok) {
+        const d = await r.json();
+        setWebsites(Array.isArray(d) ? d : []);
+      }
+    } catch {} finally { setFetching(false); }
+  };
+
+  const addWebsite = async () => {
+    if (!formData.domain) return;
+    setAdding(true);
+    try {
+      const r = await fetch(`${API_URL}/websites`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...formData, user_id: 1 })
+      });
+      if (r.ok) {
+        await fetchWebsites();
+        setShowAdd(false);
+        setFormData({ domain: '', site_type: 'custom', shopify_store_url: '', shopify_access_token: '' });
+      }
+    } catch {} finally { setAdding(false); }
+  };
+
+  const deleteWebsite = async (id: number) => {
+    if (!confirm('Delete this website? All data will be removed.')) return;
+    try {
+      await fetch(`${API_URL}/websites/${id}`, { method: 'DELETE' });
+      await fetchWebsites();
+    } catch {}
+  };
+
+  const getIcon = (type: string) => {
+    switch (type) {
+      case 'shopify': return <ShoppingCart className="w-4 h-4 text-green-400" />;
+      case 'wordpress': return <Layers className="w-4 h-4 text-blue-400" />;
+      default: return <Globe className="w-4 h-4 text-purple-400" />;
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="card-liquid p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-[#f5f5f7]">Your Websites</h3>
+            <p className="text-[#52525b] text-sm mt-1">{websites.length} website{websites.length !== 1 ? 's' : ''} registered</p>
+          </div>
+          <button onClick={() => setShowAdd(!showAdd)} className="btn-premium">
+            <Plus className="w-4 h-4" /> Add Website
+          </button>
+        </div>
+
+        <AnimatePresence>
+          {showAdd && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden mb-4">
+              <div className="bg-white/[0.03] rounded-xl p-4 border border-white/[0.06] space-y-3">
+                <div>
+                  <label className="block text-[#52525b] text-xs mb-1.5">Domain</label>
+                  <input type="text" placeholder="example.com" value={formData.domain}
+                    onChange={e => setFormData({ ...formData, domain: e.target.value })}
+                    className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-[#f5f5f7] placeholder-[#52525b] focus:outline-none focus:border-[#7c6cf9]/40" />
+                </div>
+                <div>
+                  <label className="block text-[#52525b] text-xs mb-1.5">Platform</label>
+                  <select value={formData.site_type}
+                    onChange={e => setFormData({ ...formData, site_type: e.target.value })}
+                    className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-[#f5f5f7] focus:outline-none focus:border-[#7c6cf9]/40">
+                    <option value="custom">Custom</option>
+                    <option value="shopify">Shopify</option>
+                    <option value="wordpress">WordPress</option>
+                  </select>
+                </div>
+                {formData.site_type === 'shopify' && (
+                  <>
+                    <div>
+                      <label className="block text-[#52525b] text-xs mb-1.5">Store URL</label>
+                      <input type="text" placeholder="mystore.myshopify.com" value={formData.shopify_store_url}
+                        onChange={e => setFormData({ ...formData, shopify_store_url: e.target.value })}
+                        className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-[#f5f5f7] placeholder-[#52525b] focus:outline-none focus:border-[#7c6cf9]/40" />
+                    </div>
+                    <div>
+                      <label className="block text-[#52525b] text-xs mb-1.5">Access Token</label>
+                      <input type="password" placeholder="shpat_xxx" value={formData.shopify_access_token}
+                        onChange={e => setFormData({ ...formData, shopify_access_token: e.target.value })}
+                        className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-[#f5f5f7] placeholder-[#52525b] focus:outline-none focus:border-[#7c6cf9]/40" />
+                    </div>
+                  </>
+                )}
+                <div className="flex gap-2">
+                  <button onClick={() => setShowAdd(false)} className="flex-1 px-3 py-2 rounded-lg text-sm text-[#52525b] hover:bg-white/[0.03] transition-all">Cancel</button>
+                  <button onClick={addWebsite} disabled={adding || !formData.domain}
+                    className="flex-1 btn-premium justify-center disabled:opacity-50">
+                    {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Plus className="w-4 h-4" /> Add</>}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {fetching ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 text-[#7c6cf9] animate-spin" />
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {websites.map(site => (
+              <div key={site.id} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/[0.04]">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 bg-white/[0.03] rounded-lg">{getIcon(site.site_type)}</div>
+                  <div>
+                    <p className="text-sm text-[#f5f5f7] font-medium">{site.domain}</p>
+                    <p className="text-[10px] text-[#52525b] capitalize">{site.site_type}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {site.health_score !== null && (
+                    <span className={`text-sm font-bold ${site.health_score >= 70 ? 'text-[#4ade80]' : site.health_score >= 50 ? 'text-[#fbbf24]' : 'text-[#f87171]'}`}>
+                      {Math.round(site.health_score)}
+                    </span>
+                  )}
+                  <button onClick={() => deleteWebsite(site.id)} className="text-[#52525b] hover:text-[#f87171] transition-colors p-1">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

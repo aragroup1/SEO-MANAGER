@@ -24,6 +24,7 @@ import AIStrategist from '@/components/AIStrategist';
 import ReportingDashboard from '@/components/ReportingDashboard';
 import SettingsPanel from '@/components/SettingsPanel';
 import OverviewDashboard from '@/components/OverviewDashboard';
+import SummaryDashboard from '@/components/SummaryDashboard';
 
 interface Website {
   id: number;
@@ -165,12 +166,12 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'road-to-one', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'road-to-one', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings', 'summary'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
     { id: 'overview', label: 'Overview', icon: Compass },
-    { id: 'websites', label: 'Websites', icon: Layers },
+    { id: 'summary', label: 'Summary', icon: Layers },
     { id: 'divider1', label: '', icon: null },
     { id: 'audit', label: 'Site Audit', icon: FileSearch },
     { id: 'keywords', label: 'Keywords', icon: Target },
@@ -426,13 +427,18 @@ export default function Dashboard() {
                   )}
 
                   {websites.length > 0 ? (
-                    <OverviewDashboard onSelectWebsite={handleSelectWebsite} selectedWebsite={selectedWebsite} />
+                    <OverviewDashboard
+                      onSelectWebsite={handleSelectWebsite}
+                      selectedWebsite={selectedWebsite}
+                      onAddWebsite={() => setActiveTab('settings')}
+                      onOpenSettings={() => setActiveTab('settings')}
+                    />
                   ) : (
                     <motion.div variants={fadeUpVariants} initial="hidden" animate="visible" className="card-liquid p-12 text-center">
                       <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
                       <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">Welcome to SEO Intelligence</h3>
                       <p className="text-[#52525b] mb-6">Add your first website to start tracking SEO performance.</p>
-                      <button onClick={() => setActiveTab('websites')} className="btn-premium">
+                      <button onClick={() => setActiveTab('settings')} className="btn-premium">
                         Add Website <ChevronRight className="w-4 h-4" />
                       </button>
                     </motion.div>
@@ -440,10 +446,21 @@ export default function Dashboard() {
                 </motion.div>
               )}
 
-              {activeTab === 'websites' && (
-                <motion.div key="websites" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+              {activeTab === 'summary' && selectedWebsite && (
+                <motion.div key={`summary-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
                   transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
-                  <WebsiteManager onSelectWebsite={handleSelectWebsite} onWebsitesChange={fetchWebsites} />
+                  <SummaryDashboard websiteId={selectedWebsite} onNavigate={(tab) => setActiveTab(tab)} />
+                </motion.div>
+              )}
+
+              {activeTab === 'summary' && !selectedWebsite && (
+                <motion.div key="summary-empty" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                  transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                  <div className="card-liquid p-12 text-center">
+                    <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
+                    <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">Select a Website</h3>
+                    <p className="text-[#52525b]">Choose a website from the sidebar to view its summary dashboard.</p>
+                  </div>
                 </motion.div>
               )}
 

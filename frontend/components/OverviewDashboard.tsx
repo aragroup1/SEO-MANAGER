@@ -7,7 +7,7 @@ import {
   TrendingUp, TrendingDown, Minus, Search, MousePointerClick,
   Eye, AlertTriangle, CheckCircle, Loader2, Zap, Bot,
   Activity, Target, Star, Sparkles, Globe, BarChart3,
-  ArrowRight, Shield, ChevronRight
+  ArrowRight, Shield, ChevronRight, Plus, Settings
 } from 'lucide-react';
 
 interface WebsiteSummary {
@@ -44,9 +44,13 @@ const cardVariants = {
 export default function OverviewDashboard({
   onSelectWebsite,
   selectedWebsite,
+  onAddWebsite,
+  onOpenSettings,
 }: {
   onSelectWebsite: (id: number) => void;
   selectedWebsite: number | null;
+  onAddWebsite?: () => void;
+  onOpenSettings?: () => void;
 }) {
   const [summaries, setSummaries] = useState<WebsiteSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +87,26 @@ export default function OverviewDashboard({
 
   return (
     <div className="space-y-6">
+      {/* Header with actions */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-[#f5f5f7] tracking-tight">Dashboard Overview</h2>
+          <p className="text-[#52525b] text-sm mt-0.5">All your websites at a glance</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {onAddWebsite && (
+            <button onClick={onAddWebsite} className="btn-premium">
+              <Plus className="w-4 h-4" /> Add Website
+            </button>
+          )}
+          {onOpenSettings && (
+            <button onClick={onOpenSettings} className="px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[#52525b] hover:text-[#f5f5f7] hover:bg-white/[0.06] transition-all">
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Aggregate Summary Bar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[

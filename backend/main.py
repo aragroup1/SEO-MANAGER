@@ -827,6 +827,163 @@ async def get_automation_summary(website_id: int, days: int = 7):
     return result
 
 
+@app.get("/api/websites/{website_id}/full-summary")
+async def get_full_website_summary(website_id: int, db: Session = Depends(get_db)):
+    """Get a comprehensive unified summary for a single website — all modules in one call."""
+    website = db.query(Website).filter(Website.id == website_id, Website.is_active == True).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    # ─── 1. Audit History (for trend charts) ───
+    audit_history = db.query(AuditReport)\
+        .filter(AuditReport.website_id == website_id)\
+        .order_by(AuditReport.audit_date.desc())\
+        .limit(30).all()
+    audit_history_reversed = list(reversed(audit_history))
+
+    latest_audit = audit_history[0] if audit_history else None
+    prev_audit = audit_history[1] if len(audit_history) > 1 else None
+
+    # ─── 2. Keyword Snapshot History ───
+    keyword_history = db.query(KeywordSnapshot)\
+        .filter(KeywordSnapshot.website_id == website_id)\
+        .order_by(KeywordSnapshot.snapshot_date.desc())\
+        .limit(30).all()
+    keyword_history_reversed = list(reversed(keyword_history))
+
+    latest_snap = keyword_history[0] if keyword_history else None
+
+    # ─── 3. Fixes Summary ───
+    pending_fixes = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id, ProposedFix.status == "pending"
+    ).count()
+    approved_fixes = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id, ProposedFix.status == "approved"
+    ).count()
+    applied_fixes = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id, ProposedFix.status == "applied"
+    ).count()
+    auto_approved_count = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id, ProposedFix.auto_approved_at != None
+    ).count()
+    auto_applied_count = db.query(ProposedFix).filter(
+        ProposedFix.website_id == website_id, ProposedFix.auto_applied == True
+    ).count()
+
+    # ─── 4. Tracked Keywords (Road to #1) ───
+    tracked = db.query(TrackedKeyword).filter(TrackedKeyword.website_id == website_id).all()
+    tracked_keywords = []
+    for tk in tracked:
+        tracked_keywords.append({
+            "id": tk.id,
+            "keyword": tk.keyword,
+            "current_position": tk.current_position,
+            "target_position": tk.target_position,
+            "status": tk.status,
+            "current_clicks": tk.current_clicks,
+            "current_impressions": tk.current_impressions,
+        })
+
+    # ─── 5. Strategist Cache ───
+    strategist = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+
+    # ─── 6. Content Items ───
+    content_items = db.query(ContentItem).filter(ContentItem.website_id == website_id).order_by(ContentItem.id.desc()).limit(5).all()
+
+    # ─── 7. GEO Audit ───
+    geo_audit = None
+    if strategist and strategist.geo_audit:
+        geo_audit = strategist.geo_audit
+
+    return {
+        "website": {
+            "id": website.id,
+            "domain": website.domain,
+            "site_type": website.site_type,
+            "autonomy_mode": website.autonomy_mode,
+            "created_at": website.created_at.isoformat() if website.created_at else None,
+        },
+        "audit": {
+            "latest": {
+                "health_score": latest_audit.health_score if latest_audit else None,
+                "technical_score": latest_audit.technical_score if latest_audit else None,
+                "content_score": latest_audit.content_score if latest_audit else None,
+                "performance_score": latest_audit.performance_score if latest_audit else None,
+                "mobile_score": latest_audit.mobile_score if latest_audit else None,
+                "security_score": latest_audit.security_score if latest_audit else None,
+                "total_issues": latest_audit.total_issues if latest_audit else 0,
+                "critical_issues": latest_audit.critical_issues if latest_audit else 0,
+                "errors": latest_audit.errors if latest_audit else 0,
+                "warnings": latest_audit.warnings if latest_audit else 0,
+                "audit_date": latest_audit.audit_date.isoformat() if latest_audit else None,
+                "score_change": round(latest_audit.health_score - (prev_audit.health_score if prev_audit else latest_audit.health_score), 1) if latest_audit else 0,
+            },
+            "history": [
+                {
+                    "date": a.audit_date.isoformat(),
+                    "health_score": a.health_score,
+                    "technical_score": a.technical_score,
+                    "content_score": a.content_score,
+                    "performance_score": a.performance_score,
+                    "total_issues": a.total_issues,
+                }
+                for a in audit_history_reversed
+            ],
+        },
+        "keywords": {
+            "latest": {
+                "total_keywords": latest_snap.total_keywords if latest_snap else 0,
+                "total_clicks": latest_snap.total_clicks if latest_snap else 0,
+                "total_impressions": latest_snap.total_impressions if latest_snap else 0,
+                "avg_position": latest_snap.avg_position if latest_snap else 0,
+                "avg_ctr": latest_snap.avg_ctr if latest_snap else 0,
+                "snapshot_date": latest_snap.snapshot_date.isoformat() if latest_snap else None,
+            },
+            "history": [
+                {
+                    "date": s.snapshot_date.isoformat(),
+                    "total_keywords": s.total_keywords,
+                    "total_clicks": s.total_clicks,
+                    "total_impressions": s.total_impressions,
+                    "avg_position": s.avg_position,
+                }
+                for s in keyword_history_reversed
+            ],
+            "tracked": tracked_keywords,
+            "tracked_count": len(tracked_keywords),
+        },
+        "fixes": {
+            "pending": pending_fixes,
+            "approved": approved_fixes,
+            "applied": applied_fixes,
+            "auto_approved": auto_approved_count,
+            "auto_applied": auto_applied_count,
+        },
+        "strategist": {
+            "has_strategy": bool(strategist and strategist.strategy),
+            "has_weekly": bool(strategist and strategist.weekly_plan),
+            "has_portfolio": bool(strategist and strategist.portfolio),
+            "has_linking": bool(strategist and strategist.linking),
+            "has_decay": bool(strategist and strategist.decay),
+            "strategy_generated_at": strategist.strategy_generated_at.isoformat() if strategist and strategist.strategy_generated_at else None,
+            "weekly_generated_at": strategist.weekly_generated_at.isoformat() if strategist and strategist.weekly_generated_at else None,
+        },
+        "geo": {
+            "has_audit": bool(geo_audit),
+            "overall_score": geo_audit.get("scores", {}).get("overall") if geo_audit else None,
+            "pages_analyzed": geo_audit.get("pages_analyzed") if geo_audit else None,
+            "audit_date": strategist.geo_audit_at.isoformat() if strategist and strategist.geo_audit_at else None,
+        },
+        "content": {
+            "recent_count": len(content_items),
+            "recent": [
+                {"id": c.id, "title": c.title, "content_type": c.content_type, "status": c.status}
+                for c in content_items
+            ],
+        },
+    }
+
+
 # --- Overview Summary ---
 
 @app.get("/api/overview")
