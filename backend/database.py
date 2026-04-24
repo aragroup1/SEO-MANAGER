@@ -15,7 +15,13 @@ if DATABASE_URL.startswith("postgres://"):
 
 try:
     if "postgresql" in DATABASE_URL:
-        engine = create_engine(DATABASE_URL)
+        engine = create_engine(
+            DATABASE_URL,
+            pool_size=10,
+            max_overflow=20,
+            pool_pre_ping=True,
+            pool_recycle=3600,
+        )
     else:
         engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -69,8 +75,8 @@ class Website(Base):
 class AuditReport(Base):
     __tablename__ = "audit_reports"
     id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
-    audit_date = Column(DateTime, default=datetime.utcnow)
+    website_id = Column(Integer, ForeignKey("websites.id"), index=True)
+    audit_date = Column(DateTime, default=datetime.utcnow, index=True)
     health_score = Column(Float, default=0)
     technical_score = Column(Float, default=0)
     content_score = Column(Float, default=0)
@@ -87,7 +93,7 @@ class AuditReport(Base):
 class ContentItem(Base):
     __tablename__ = "content_calendar"
     id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"))
+    website_id = Column(Integer, ForeignKey("websites.id"), index=True)
     title = Column(String, nullable=False)
     content_type = Column(String, default="Blog Post")
     publish_date = Column(DateTime)
@@ -121,7 +127,7 @@ class ProposedFix(Base):
     """
     __tablename__ = "proposed_fixes"
     id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
     audit_report_id = Column(Integer, nullable=True)  # Which audit triggered this fix
 
     # What type of fix
@@ -142,11 +148,11 @@ class ProposedFix(Base):
     ai_reasoning = Column(Text, nullable=True)  # Why the AI chose this
 
     # Status workflow: pending -> approved/rejected -> applied/failed
-    status = Column(String, default="pending")
+    status = Column(String, default="pending", index=True)
     # pending, approved, rejected, applied, failed
 
     # Metadata
-    severity = Column(String, default="medium")  # critical, high, medium, low
+    severity = Column(String, default="medium", index=True)  # critical, high, medium, low
     category = Column(String, default="content")  # content, technical, accessibility
     batch_id = Column(String, nullable=True)  # Group related fixes together
     error_message = Column(Text, nullable=True)  # If application failed, why
@@ -166,12 +172,12 @@ class KeywordSnapshot(Base):
     """
     __tablename__ = "keyword_snapshots"
     id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
 
     # Date range this data covers
     date_from = Column(DateTime, nullable=False)
     date_to = Column(DateTime, nullable=False)
-    snapshot_date = Column(DateTime, default=datetime.utcnow)
+    snapshot_date = Column(DateTime, default=datetime.utcnow, index=True)
 
     # The actual keyword data — stored as JSON array of keyword objects
     # Each object: {query, clicks, impressions, ctr, position, page}
@@ -199,7 +205,7 @@ class TrackedKeyword(Base):
     """
     __tablename__ = "tracked_keywords"
     id = Column(Integer, primary_key=True, index=True)
-    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
     keyword = Column(String, nullable=False)
 
     # Latest ranking data (updated on each sync)

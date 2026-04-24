@@ -11,10 +11,39 @@ from dotenv import load_dotenv
 import json
 import secrets
 import hashlib
+import time
+from collections import defaultdict
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 load_dotenv()
+
+# ─── Simple In-Memory Rate Limiter ───
+# Tracks requests per IP per endpoint. Resets every minute.
+# Production: replace with Redis-based limiter.
+_rate_limit_store: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
+_RATE_LIMIT_DEFAULT = 60   # requests per minute
+_RATE_LIMIT_AI = 10        # AI endpoints (content gen, research, etc.)
+_RATE_LIMIT_AUDIT = 3      # audit runs per minute
+
+def _check_rate_limit(client_ip: str, endpoint: str, limit: int) -> bool:
+    now = time.time()
+    window = 60  # 1 minute window
+    # Clean old entries
+    _rate_limit_store[client_ip][endpoint] = [
+        t for t in _rate_limit_store[client_ip][endpoint] if now - t < window
+    ]
+    if len(_rate_limit_store[client_ip][endpoint]) >= limit:
+        return False
+    _rate_limit_store[client_ip][endpoint].append(now)
+    return True
+
+def _get_rate_limit(endpoint: str) -> int:
+    if any(x in endpoint for x in ["/generate", "/research", "/strategy", "/content/", "/audit"]):
+        if "/audit" in endpoint:
+            return _RATE_LIMIT_AUDIT
+        return _RATE_LIMIT_AI
+    return _RATE_LIMIT_DEFAULT
 
 # Import shared database objects
 from database import (
@@ -24,9 +53,11 @@ from database import (
 
 app = FastAPI(title="SEO Intelligence Platform")
 
+# CORS: Use FRONTEND_URL env var for production, fallback to common dev origins
+_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:3000,https://localhost:3000").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,8 +80,17 @@ PUBLIC_ROUTES = {"/health", "/api/auth/login", "/api/auth/check", "/docs", "/ope
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Check auth token on all API requests (except public routes)."""
+    """Check auth token + rate limit on all API requests (except public routes)."""
     path = request.url.path
+
+    # ─── Rate Limiting ───
+    client_ip = request.headers.get("X-Forwarded-For", request.client.host or "unknown").split(",")[0].strip()
+    limit = _get_rate_limit(path)
+    if not _check_rate_limit(client_ip, path, limit):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Rate limit exceeded. Try again in a minute. (Limit: {limit}/min)"}
+        )
 
     # Allow public routes
     if path in PUBLIC_ROUTES or not AUTH_PASSWORD:
@@ -1217,6 +1257,17 @@ async def startup_event():
                 "ALTER TABLE websites ADD COLUMN IF NOT EXISTS autonomy_mode VARCHAR DEFAULT 'manual'",
                 "ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS auto_approved_at TIMESTAMP",
                 "ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS auto_applied BOOLEAN DEFAULT FALSE",
+                # Performance indexes
+                "CREATE INDEX IF NOT EXISTS idx_audit_website ON audit_reports(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_reports(audit_date)",
+                "CREATE INDEX IF NOT EXISTS idx_content_website ON content_calendar(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_fixes_website ON proposed_fixes(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_fixes_status ON proposed_fixes(status)",
+                "CREATE INDEX IF NOT EXISTS idx_fixes_severity ON proposed_fixes(severity)",
+                "CREATE INDEX IF NOT EXISTS idx_snapshots_website ON keyword_snapshots(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_snapshots_date ON keyword_snapshots(snapshot_date)",
+                "CREATE INDEX IF NOT EXISTS idx_tracked_website ON tracked_keywords(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_integration_website ON integrations(website_id)",
             ]
             for migration in migrations:
                 try:
