@@ -66,13 +66,15 @@ from robots_generator import (
 app = FastAPI(title="SEO Intelligence Platform")
 
 # CORS: Use FRONTEND_URL env var for production, fallback to common dev origins
-_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:3000,https://localhost:3000").split(",") if o.strip()]
+_CORS_ORIGINS = [o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:3000,https://localhost:3000").split(",") if o.strip()]
+# Reject wildcards in origins
+_ALLOWED_ORIGINS = [o for o in _CORS_ORIGINS if "*" not in o]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 # ─── Simple Auth System ───
@@ -89,6 +91,18 @@ SESSION_EXPIRY_HOURS = 72  # 3 days
 # Public routes that don't need auth
 PUBLIC_ROUTES = {"/health", "/api/auth/login", "/api/auth/check", "/docs", "/openapi.json"}
 
+# OAuth callback routes (exact match only)
+OAUTH_CALLBACKS = {"/api/integrations/oauth/google/callback", "/api/integrations/oauth/shopify/callback"}
+
+
+def _get_client_ip(request: Request) -> str:
+    """Get client IP, preferring the last trusted proxy hop."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        # Use the rightmost IP (closest to the server, hardest to spoof)
+        return xff.split(",")[-1].strip()
+    return request.client.host or "unknown"
+
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -96,7 +110,7 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
 
     # ─── Rate Limiting ───
-    client_ip = request.headers.get("X-Forwarded-For", request.client.host or "unknown").split(",")[0].strip()
+    client_ip = _get_client_ip(request)
     limit = _get_rate_limit(path)
     if not _check_rate_limit(client_ip, path, limit):
         return JSONResponse(
@@ -105,11 +119,11 @@ async def auth_middleware(request: Request, call_next):
         )
 
     # Allow public routes
-    if path in PUBLIC_ROUTES or not AUTH_PASSWORD:
+    if path in PUBLIC_ROUTES:
         return await call_next(request)
 
-    # Allow OAuth callbacks (Google needs to redirect back)
-    if "/oauth/" in path or "/callback" in path:
+    # Allow OAuth callbacks (exact match only — prevents bypass)
+    if path in OAUTH_CALLBACKS:
         return await call_next(request)
 
     # Allow CORS preflight
@@ -218,8 +232,12 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "database": db_status, "version": "1.0.0"}
 
 @app.get("/health/env")
-async def env_check():
-    """Check which API keys/env vars are configured."""
+async def env_check(request: Request):
+    """Check which API keys/env vars are configured. Requires auth."""
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    if not token or token not in active_sessions:
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
     return {
         "GOOGLE_GEMINI_API_KEY": "set" if os.getenv("GOOGLE_GEMINI_API_KEY") else "MISSING",
         "DATAFORSEO_LOGIN": "set" if os.getenv("DATAFORSEO_LOGIN") else "MISSING",
@@ -236,14 +254,23 @@ async def root():
 
 # --- Website Management ---
 
+import re
+
+_DOMAIN_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$')
+_MAX_DOMAIN_LEN = 253
+
 @app.post("/websites")
 async def create_website(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     try:
         data = await request.json()
-        if not data.get('domain'):
+        domain_raw = data.get('domain', '').strip()
+        if not domain_raw:
             raise HTTPException(status_code=400, detail="Domain is required")
 
-        domain = data['domain'].replace('http://', '').replace('https://', '').rstrip('/')
+        # Sanitize domain
+        domain = domain_raw.replace('http://', '').replace('https://', '').split('/')[0].rstrip('/').lower()
+        if len(domain) > _MAX_DOMAIN_LEN or not _DOMAIN_RE.match(domain):
+            raise HTTPException(status_code=400, detail="Invalid domain format")
 
         existing = db.query(Website).filter(Website.domain == domain).first()
         if existing:
@@ -272,7 +299,7 @@ async def create_website(request: Request, background_tasks: BackgroundTasks, db
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Database error occurred")
 
 @app.get("/websites")
 async def get_websites(user_id: Optional[int] = None, db: Session = Depends(get_db)):
@@ -293,7 +320,7 @@ async def get_websites(user_id: Optional[int] = None, db: Session = Depends(get_
             })
         return result
     except Exception as e:
-        print(f"Error fetching websites: {e}")
+        print(f"[Website] Error fetching websites: {e}")
         return []
 
 @app.delete("/websites/{website_id}")
@@ -740,19 +767,23 @@ async def init_google_auth(user_id: int = 1, integration_type: str = "search_con
 # --- Database Migrations (lightweight, run at startup) ---
 def _run_migrations():
     """Add missing columns that may not exist in older databases."""
+    db = SessionLocal()
     try:
-        db = SessionLocal()
         # Check if desktop_score column exists in audit_reports
         try:
             db.execute(text("SELECT desktop_score FROM audit_reports LIMIT 1"))
+            db.commit()
         except Exception:
+            db.rollback()
             print("[Migration] Adding desktop_score column to audit_reports...")
-            db.execute(text("ALTER TABLE audit_reports ADD COLUMN desktop_score FLOAT DEFAULT 0"))
+            db.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS desktop_score FLOAT DEFAULT 0"))
             db.commit()
             print("[Migration] desktop_score column added successfully.")
-        db.close()
     except Exception as e:
+        db.rollback()
         print(f"[Migration] Migration check failed (non-critical): {e}")
+    finally:
+        db.close()
 
 _run_migrations()
 
@@ -1538,29 +1569,7 @@ import os
 import json
 from datetime import datetime
 
-@app.get("/api/admin/db/check-railway")
-async def check_railway_data():
-    """Check if Railway PostgreSQL has data by trying common connection patterns."""
-    import psycopg2
-    results = []
-    # Try common Railway env var patterns
-    env_vars = ["DATABASE_URL", "RAILWAY_DATABASE_URL", "POSTGRES_URL", "PGDATABASE"]
-    for var in env_vars:
-        url = os.getenv(var)
-        if url:
-            try:
-                conn = psycopg2.connect(url)
-                cur = conn.cursor()
-                cur.execute("SELECT COUNT(*) FROM websites")
-                count = cur.fetchone()[0]
-                cur.close()
-                conn.close()
-                results.append({"env_var": var, "connected": True, "websites": count})
-            except Exception as e:
-                results.append({"env_var": var, "connected": False, "error": str(e)})
-    if not results:
-        return {"message": "No PostgreSQL env vars found. Using SQLite fallback.", "sqlite_websites": 0}
-    return {"checks": results}
+# Railway DB check endpoint removed — exposed internal connection details.
 
 
 @app.post("/api/admin/db/backup")
@@ -1568,9 +1577,10 @@ async def create_backup():
     """Create a JSON backup of the entire database."""
     from export_engine import export_database_to_json
     import os
-    os.makedirs("backups", exist_ok=True)
+    os.makedirs(_BACKUP_DIR, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filepath = f"backups/seo_backup_{timestamp}.json"
+    filename = f"seo_backup_{timestamp}_{uuid.uuid4().hex[:8]}.json"
+    filepath = os.path.join(_BACKUP_DIR, filename)
     data = export_database_to_json()
     with open(filepath, "w") as f:
         f.write(data)
@@ -1584,7 +1594,7 @@ async def create_backup():
         )
         db.add(backup)
         db.commit()
-        return {"success": True, "file": filepath, "size_bytes": size, "websites": websites_count}
+        return {"success": True, "file": filename, "size_bytes": size, "websites": websites_count}
     finally:
         db.close()
 
@@ -1603,25 +1613,36 @@ async def list_backups():
         db.close()
 
 
+import uuid
+
+_BACKUP_DIR = os.path.abspath("backups")
+
 @app.post("/api/admin/db/restore")
 async def restore_from_backup(request: Request):
     """Restore websites from a JSON backup file."""
     data = await request.json()
-    filepath = data.get("file")
-    if not filepath or not os.path.exists(filepath):
-        raise HTTPException(status_code=400, detail="Backup file not found")
-    with open(filepath, "r") as f:
-        backup = json.load(f)
+    filepath_raw = data.get("file", "")
+    # Prevent path traversal — only allow files in the backups directory
+    filepath = os.path.abspath(os.path.join(_BACKUP_DIR, os.path.basename(filepath_raw)))
+    if not filepath.startswith(_BACKUP_DIR) or not os.path.exists(filepath):
+        raise HTTPException(status_code=400, detail="Backup file not found or invalid path")
+    try:
+        with open(filepath, "r") as f:
+            backup = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid backup file")
     db = SessionLocal()
     restored = 0
     try:
         for w_data in backup.get("websites", []):
-            # Check if domain already exists
-            existing = db.query(Website).filter(Website.domain == w_data["domain"]).first()
+            domain = w_data.get("domain", "")
+            if not domain or not _DOMAIN_RE.match(domain):
+                continue
+            existing = db.query(Website).filter(Website.domain == domain).first()
             if existing:
                 continue
             website = Website(
-                domain=w_data["domain"],
+                domain=domain,
                 site_type=w_data.get("site_type", "custom"),
                 monthly_traffic=w_data.get("monthly_traffic"),
                 autonomy_mode=w_data.get("autonomy_mode", "manual"),
@@ -1630,7 +1651,6 @@ async def restore_from_backup(request: Request):
             db.commit()
             db.refresh(website)
             restored += 1
-            # Restore audits
             for a in w_data.get("audits", []):
                 audit = AuditReport(
                     website_id=website.id,
@@ -1647,21 +1667,19 @@ async def restore_from_backup(request: Request):
                     detailed_findings=a.get("findings", {}),
                 )
                 db.add(audit)
-            # Restore content
             for c in w_data.get("content", []):
                 item = ContentItem(
                     website_id=website.id,
-                    title=c.get("title", ""),
+                    title=c.get("title", "")[:500],
                     content_type=c.get("content_type", "Blog Post"),
                     status=c.get("status", "Draft"),
                     keywords_target=c.get("keywords_target", []),
                 )
                 db.add(item)
-            # Restore tracked keywords
             for tk in w_data.get("tracked_keywords", []):
                 tk_obj = TrackedKeyword(
                     website_id=website.id,
-                    keyword=tk.get("keyword", ""),
+                    keyword=tk.get("keyword", "")[:500],
                     current_position=tk.get("current_position"),
                     target_position=tk.get("target_position", 1),
                     status=tk.get("status", "tracking"),
@@ -2082,58 +2100,12 @@ async def update_robots_endpoint(website_id: int, request: Request, db: Session 
 # NEW ENDPOINTS: MULTI-USER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.post("/api/users/register")
-async def register_user(request: Request):
-    data = await request.json()
-    db = SessionLocal()
-    try:
-        existing = db.query(User).filter(User.email == data.get("email")).first()
-        if existing:
-            raise HTTPException(status_code=409, detail="Email already registered")
-        user = User(email=data.get("email"), name=data.get("name", ""))
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        return {"id": user.id, "email": user.email, "name": user.name}
-    finally:
-        db.close()
+# User registration and listing endpoints removed for security.
+# This is a single-user application. Users are managed via database directly.
 
 
-@app.get("/api/users")
-async def list_users():
-    db = SessionLocal()
-    try:
-        users = db.query(User).all()
-        return [{"id": u.id, "email": u.email, "name": u.name} for u in users]
-    finally:
-        db.close()
-
-
-@app.post("/api/websites/{website_id}/members")
-async def add_website_member(website_id: int, request: Request):
-    data = await request.json()
-    db = SessionLocal()
-    try:
-        role = UserRole(
-            user_id=data.get("user_id"),
-            website_id=website_id,
-            role=data.get("role", "editor"),
-        )
-        db.add(role)
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
-
-
-@app.get("/api/websites/{website_id}/members")
-async def get_website_members(website_id: int):
-    db = SessionLocal()
-    try:
-        roles = db.query(UserRole).filter(UserRole.website_id == website_id).all()
-        return [{"user_id": r.user_id, "role": r.role} for r in roles]
-    finally:
-        db.close()
+# Multi-user member endpoints disabled for security.
+# This is a single-user application.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

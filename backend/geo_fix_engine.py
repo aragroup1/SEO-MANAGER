@@ -10,6 +10,8 @@ import httpx
 import aiohttp
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+import socket
+import ipaddress
 from dotenv import load_dotenv
 
 from database import SessionLocal, Website, ProposedFix, Integration
@@ -42,10 +44,43 @@ async def _generate_ai_content(prompt: str, max_tokens: int = 500) -> str:
     return ""
 
 
+def _is_safe_url(url: str) -> bool:
+    """Prevent SSRF by blocking internal/private URLs."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            return False
+        if hostname == "169.254.169.254":
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_multicast:
+                return False
+        except ValueError:
+            try:
+                resolved = socket.getaddrinfo(hostname, None)
+                for _, _, _, _, sockaddr in resolved:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    if ip.is_private or ip.is_loopback or ip.is_reserved:
+                        return False
+            except socket.gaierror:
+                pass
+        return True
+    except Exception:
+        return False
+
+
 async def _crawl_page(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]:
     """Crawl a page and extract GEO-relevant data."""
+    if not _is_safe_url(url):
+        return {"url": url, "error": "unsafe_url"}
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), ssl=False, allow_redirects=True) as resp:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), allow_redirects=True) as resp:
             if resp.status != 200:
                 return {"url": url, "error": "Status " + str(resp.status)}
 
@@ -148,7 +183,7 @@ async def scan_and_generate_geo_fixes(website_id: int) -> Dict[str, Any]:
 
         print(f"[GEO Fix] Starting scan for {domain}")
 
-        connector = aiohttp.TCPConnector(limit=5, ssl=False)
+        connector = aiohttp.TCPConnector(limit=5)
         async with aiohttp.ClientSession(
             connector=connector,
             headers={"User-Agent": "SEOIntelligenceBot/2.0"}

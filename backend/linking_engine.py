@@ -11,6 +11,8 @@ import aiohttp
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 from collections import defaultdict
+import socket
+import ipaddress
 from dotenv import load_dotenv
 
 from database import SessionLocal, Website, AuditReport, TrackedKeyword, KeywordSnapshot
@@ -19,11 +21,44 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
 
 
+def _is_safe_url(url: str) -> bool:
+    """Prevent SSRF by blocking internal/private URLs."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            return False
+        if hostname == "169.254.169.254":
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_multicast:
+                return False
+        except ValueError:
+            try:
+                resolved = socket.getaddrinfo(hostname, None)
+                for _, _, _, _, sockaddr in resolved:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    if ip.is_private or ip.is_loopback or ip.is_reserved:
+                        return False
+            except socket.gaierror:
+                pass
+        return True
+    except Exception:
+        return False
+
+
 async def _crawl_page_for_links(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]:
     """Crawl a page and extract content + existing internal links."""
+    if not _is_safe_url(url):
+        return {"url": url, "error": "unsafe_url"}
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=15),
-                               ssl=False, allow_redirects=True) as resp:
+                               allow_redirects=True) as resp:
             if resp.status != 200:
                 return {"url": url, "error": f"Status {resp.status}"}
 
@@ -143,13 +178,15 @@ async def analyze_internal_linking(website_id: int) -> Dict[str, Any]:
                     pages_to_scan.append(url)
 
         # Crawl pages
-        connector = aiohttp.TCPConnector(limit=5, ssl=False)
+        connector = aiohttp.TCPConnector(limit=5)
         async with aiohttp.ClientSession(
             connector=connector,
             headers={"User-Agent": "SEOIntelligenceBot/2.0"}
         ) as session:
             page_data = []
             for url in pages_to_scan[:40]:  # Cap at 40 pages
+                if not _is_safe_url(url):
+                    continue
                 data = await _crawl_page_for_links(session, url)
                 if not data.get("error"):
                     page_data.append(data)
@@ -383,13 +420,15 @@ def get_link_graph(website_id: int) -> Dict[str, Any]:
 
         # Crawl pages
         async def _crawl():
-            connector = aiohttp.TCPConnector(limit=5, ssl=False)
+            connector = aiohttp.TCPConnector(limit=5)
             async with aiohttp.ClientSession(
                 connector=connector,
                 headers={"User-Agent": "SEOIntelligenceBot/2.0"}
             ) as session:
                 page_data = []
                 for url in pages_to_scan[:40]:
+                    if not _is_safe_url(url):
+                        continue
                     data = await _crawl_page_for_links(session, url)
                     if not data.get("error"):
                         page_data.append(data)

@@ -11,6 +11,8 @@ import httpx
 import aiohttp
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+import socket
+import ipaddress
 from dotenv import load_dotenv
 
 from database import SessionLocal, Website
@@ -20,10 +22,43 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GOOGLE_GEMINI_API_KEY", "")
 
 
+def _is_safe_url(url: str) -> bool:
+    """Prevent SSRF by blocking internal/private URLs."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            return False
+        if hostname == "169.254.169.254":
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_multicast:
+                return False
+        except ValueError:
+            try:
+                resolved = socket.getaddrinfo(hostname, None)
+                for _, _, _, _, sockaddr in resolved:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    if ip.is_private or ip.is_loopback or ip.is_reserved:
+                        return False
+            except socket.gaierror:
+                pass
+        return True
+    except Exception:
+        return False
+
+
 async def _crawl_page_for_geo(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]:
     """Crawl a page and extract GEO-relevant signals."""
+    if not _is_safe_url(url):
+        return {"url": url, "error": "unsafe_url"}
     try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), ssl=False, allow_redirects=True) as resp:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), allow_redirects=True) as resp:
             if resp.status != 200:
                 return {"url": url, "error": "Status " + str(resp.status)}
 
@@ -174,7 +209,7 @@ async def run_geo_audit(website_id: int) -> Dict[str, Any]:
 
         print(f"[GEO] Starting GEO audit for {domain}")
 
-        connector = aiohttp.TCPConnector(limit=5, ssl=False)
+        connector = aiohttp.TCPConnector(limit=5)
         async with aiohttp.ClientSession(
             connector=connector,
             headers={"User-Agent": "SEOIntelligenceBot/2.0"}
@@ -189,13 +224,15 @@ async def run_geo_audit(website_id: int) -> Dict[str, Any]:
             ]
 
             # Also crawl a few content pages from the sitemap or internal links
+            if not _is_safe_url(base_url):
+                return {"error": "unsafe_url"}
             homepage_data = await _crawl_page_for_geo(session, base_url)
             page_results = [homepage_data]
 
             # Extract some internal links from homepage to sample content pages
             if not homepage_data.get("error"):
                 try:
-                    async with session.get(base_url, timeout=aiohttp.ClientTimeout(total=15), ssl=False) as resp:
+                    async with session.get(base_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                         if resp.status == 200:
                             html = await resp.text()
                             soup = BeautifulSoup(html, 'html.parser')

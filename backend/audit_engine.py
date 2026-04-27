@@ -12,6 +12,7 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin, urlunparse
+import ipaddress
 import json
 from enum import Enum
 from collections import defaultdict
@@ -21,6 +22,37 @@ from dotenv import load_dotenv
 from database import SessionLocal, Website, AuditReport
 
 load_dotenv()
+
+
+def _is_safe_url(url: str) -> bool:
+    """Prevent SSRF by blocking internal/private URLs."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        if hostname.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+            return False
+        if hostname == "169.254.169.254":
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_multicast:
+                return False
+        except ValueError:
+            try:
+                resolved = socket.getaddrinfo(hostname, None)
+                for _, _, _, _, sockaddr in resolved:
+                    ip = ipaddress.ip_address(sockaddr[0])
+                    if ip.is_private or ip.is_loopback or ip.is_reserved:
+                        return False
+            except socket.gaierror:
+                pass
+        return True
+    except Exception:
+        return False
 
 
 class IssueSeverity(Enum):
@@ -236,13 +268,14 @@ class SEOAuditEngine:
     # ─────────────────────────────────────────────
     async def _fetch_page(self, session: aiohttp.ClientSession, url: str) -> Tuple[Optional[str], int, Dict, float, Optional[str]]:
         """Fetch a URL. Returns (html, status, headers, response_time_ms, final_url)."""
+        if not _is_safe_url(url):
+            return None, 0, {"error": "unsafe_url"}, 0, None
         start = time.time()
         try:
             async with session.get(
                 url,
                 timeout=aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT),
-                allow_redirects=True,
-                ssl=False
+                allow_redirects=True
             ) as resp:
                 elapsed = (time.time() - start) * 1000
                 headers = dict(resp.headers)
@@ -272,7 +305,7 @@ class SEOAuditEngine:
         try:
             with self:
                 print("[Audit] Starting deep audit for: " + str(self.domain))
-                connector = aiohttp.TCPConnector(limit=5, ssl=False)
+                connector = aiohttp.TCPConnector(limit=5)
                 async with aiohttp.ClientSession(
                     connector=connector,
                     headers={"User-Agent": "SEOIntelligenceBot/2.0 (+https://seointelligence.app)"}
