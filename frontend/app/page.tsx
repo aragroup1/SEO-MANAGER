@@ -31,10 +31,14 @@ const AIStrategist = lazy(() => import('@/components/AIStrategist'));
 const ReportingDashboard = lazy(() => import('@/components/ReportingDashboard'));
 const CoreWebVitalsPanel = lazy(() => import('@/components/CoreWebVitalsPanel'));
 const SchemaGenerator = lazy(() => import('@/components/SchemaGenerator'));
+const SitemapManager = lazy(() => import('@/components/SitemapManager'));
+const RobotsManager = lazy(() => import('@/components/RobotsManager'));
 const ImageOptimizer = lazy(() => import('@/components/ImageOptimizer'));
+const LinkChecker = lazy(() => import('@/components/LinkChecker'));
 const ABTestingPanel = lazy(() => import('@/components/ABTestingPanel'));
 const LocalSEOPanel = lazy(() => import('@/components/LocalSEOPanel'));
 const NotificationSettings = lazy(() => import('@/components/NotificationSettings'));
+const IndexTracker = lazy(() => import('@/components/IndexTracker'));
 
 interface Website {
   id: number;
@@ -190,7 +194,7 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'road-to-one', 'issues', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings', 'summary'];
+  const websiteRequiredTabs = ['audit', 'keywords', 'road-to-one', 'issues', 'index-tracker', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings', 'summary', 'link-checker'];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
@@ -201,9 +205,12 @@ export default function Dashboard() {
     { id: 'keywords', label: 'Keywords', icon: Target },
     { id: 'road-to-one', label: 'Road to #1', icon: Trophy },
     { id: 'issues', label: 'Issues & Fixes', icon: Wand2 },
+    { id: 'index-tracker', label: 'Index Tracker', icon: Search },
     { id: 'divider2', label: '', icon: null },
     { id: 'web-vitals', label: 'Web Vitals', icon: Gauge },
     { id: 'schema', label: 'Schema', icon: FileCode },
+    { id: 'sitemap', label: 'Sitemap', icon: FileCode },
+    { id: 'robots', label: 'Robots.txt', icon: Shield },
     { id: 'images', label: 'Images', icon: Image },
     { id: 'ab-tests', label: 'A/B Tests', icon: Split },
     { id: 'local-seo', label: 'Local SEO', icon: MapPin },
@@ -604,6 +611,15 @@ export default function Dashboard() {
                 </Suspense>
               )}
 
+              {activeTab === 'sitemap' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`sitemap-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <SitemapManager websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
               {activeTab === 'images' && selectedWebsite && (
                 <Suspense fallback={<TabLoader />}>
                   <motion.div key={`images-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
@@ -627,6 +643,33 @@ export default function Dashboard() {
                   <motion.div key={`local-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
                     transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                     <LocalSEOPanel websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'robots' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`robots-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <RobotsManager websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'link-checker' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`link-checker-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <LinkChecker websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'index-tracker' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`index-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <IndexTracker websiteId={selectedWebsite} />
                   </motion.div>
                 </Suspense>
               )}

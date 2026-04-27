@@ -75,6 +75,9 @@ class Website(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
     autonomy_mode = Column(String, default="manual")  # manual | smart | ultra
+    sitemap_xml = Column(Text, nullable=True)
+    sitemap_generated_at = Column(DateTime, nullable=True)
+    robots_txt = Column(Text, nullable=True)
     owner = relationship("User", back_populates="websites")
     audits = relationship("AuditReport", back_populates="website", cascade="all, delete-orphan")
     content_items = relationship("ContentItem", back_populates="website", cascade="all, delete-orphan")
@@ -93,6 +96,7 @@ class AuditReport(Base):
     content_score = Column(Float, default=0)
     performance_score = Column(Float, default=0)
     mobile_score = Column(Float, default=0)
+    desktop_score = Column(Float, default=0)
     security_score = Column(Float, default=0)
     total_issues = Column(Integer, default=0)
     critical_issues = Column(Integer, default=0)
@@ -108,6 +112,8 @@ class ContentItem(Base):
     title = Column(String, nullable=False)
     content_type = Column(String, default="Blog Post")
     publish_date = Column(DateTime)
+    scheduled_publish_date = Column(DateTime, nullable=True)
+    published_at = Column(DateTime, nullable=True)
     status = Column(String, default="Draft")
     keywords_target = Column(JSON, default=lambda: [])
     ai_generated_content = Column(Text)
@@ -419,6 +425,35 @@ class DatabaseBackup(Base):
     size_bytes = Column(Integer, default=0)
     websites_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BrokenLink(Base):
+    """Broken outbound link checker results."""
+    __tablename__ = "broken_links"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    page_url = Column(String, nullable=False)
+    link_url = Column(String, nullable=False)
+    anchor_text = Column(String, nullable=True)
+    status_code = Column(Integer, nullable=True)
+    error_type = Column(String, nullable=False, default="unknown")
+    checked_at = Column(DateTime, default=datetime.utcnow, index=True)
+    is_fixed = Column(Boolean, default=False, index=True)
+
+
+class IndexStatus(Base):
+    """Page index status tracker — tracks whether URLs are indexed in Google."""
+    __tablename__ = "index_statuses"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    url = Column(String, nullable=False, index=True)
+    is_indexed = Column(Boolean, default=False, index=True)
+    coverage_state = Column(String, nullable=True)  # e.g. "Submitted and indexed"
+    last_checked = Column(DateTime, default=datetime.utcnow, index=True)
+    check_method = Column(String, default="unknown")  # gsc_url_inspection | google_search_fallback
+    first_seen = Column(DateTime, default=datetime.utcnow)
+
+    website = relationship("Website")
 
 
 # Create all tables (with fallback if primary engine fails)

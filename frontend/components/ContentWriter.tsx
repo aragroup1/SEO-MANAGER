@@ -1,13 +1,14 @@
 // frontend/components/ContentWriter.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileText, Plus, Loader2, Sparkles, Lightbulb, Trash2,
   ChevronRight, ExternalLink, Copy, CheckCircle, Star,
   BookOpen, ShoppingCart, Layout, HelpCircle, Wrench,
-  Target, TrendingUp, X, Eye
+  Target, TrendingUp, X, Eye, Calendar, Clock, Send, XCircle,
+  ChevronLeft, CalendarDays, Play, AlertCircle
 } from 'lucide-react';
 
 interface ContentIdea {
@@ -21,8 +22,28 @@ interface ContentPiece {
   keywords: string[]; has_content: boolean; created_at: string | null;
 }
 
+interface QueueItem {
+  id: number;
+  title: string;
+  content_type: string;
+  status: string;
+  scheduled_publish_date: string | null;
+  published_at: string | null;
+  publish_date: string | null;
+  keywords: string[];
+  has_content: boolean;
+}
+
+interface QueueCounts {
+  total: number;
+  draft: number;
+  scheduled: number;
+  published: number;
+  failed: number;
+}
+
 export default function ContentWriter({ websiteId }: { websiteId: number }) {
-  const [activeTab, setActiveTab] = useState<'create' | 'ideas' | 'library'>('create');
+  const [activeTab, setActiveTab] = useState<'create' | 'ideas' | 'library' | 'queue'>('create');
   const [generating, setGenerating] = useState(false);
   const [ideas, setIdeas] = useState<ContentIdea[]>([]);
   const [loadingIdeas, setLoadingIdeas] = useState(false);
@@ -32,6 +53,15 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
   const [viewingContent, setViewingContent] = useState<any>(null);
   const [copied, setCopied] = useState(false);
 
+  // Queue state
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queueCounts, setQueueCounts] = useState<QueueCounts>({ total: 0, draft: 0, scheduled: 0, published: 0, failed: 0 });
+  const [loadingQueue, setLoadingQueue] = useState(false);
+  const [queueFilter, setQueueFilter] = useState<string>('all');
+  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [publishingId, setPublishingId] = useState<number | null>(null);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+
   // Form state
   const [topic, setTopic] = useState('');
   const [contentType, setContentType] = useState('blog_post');
@@ -39,6 +69,8 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
   const [wordCount, setWordCount] = useState(800);
   const [tone, setTone] = useState('professional');
   const [instructions, setInstructions] = useState('');
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('');
 
   const API = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -50,6 +82,18 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
       const r = await fetch(`${API}/api/content/${websiteId}/list`);
       if (r.ok) { const d = await r.json(); setLibrary(d.content || []); }
     } catch {} finally { setLoadingLibrary(false); }
+  };
+
+  const fetchQueue = async () => {
+    setLoadingQueue(true);
+    try {
+      const r = await fetch(`${API}/api/content/${websiteId}/queue`);
+      if (r.ok) {
+        const d = await r.json();
+        setQueue(d.queue || []);
+        setQueueCounts(d.counts || { total: 0, draft: 0, scheduled: 0, published: 0, failed: 0 });
+      }
+    } catch {} finally { setLoadingQueue(false); }
   };
 
   const generateContent = async () => {
@@ -67,7 +111,18 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
       if (r.ok) {
         const d = await r.json();
         if (d.error) { alert(d.error); }
-        else { setGeneratedContent(d); fetchLibrary(); }
+        else {
+          setGeneratedContent(d);
+          fetchLibrary();
+          // Auto-schedule if date+time set
+          if (scheduleDate && scheduleTime && d.content_id) {
+            const scheduled = new Date(`${scheduleDate}T${scheduleTime}`);
+            await fetch(`${API}/api/content/${websiteId}/${d.content_id}/schedule`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ publish_date: scheduled.toISOString() })
+            });
+          }
+        }
       }
     } catch { alert('Failed to generate'); }
     finally { setGenerating(false); }
@@ -93,8 +148,62 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
     try {
       await fetch(`${API}/api/content/${websiteId}/${id}`, { method: 'DELETE' });
       setLibrary(prev => prev.filter(c => c.id !== id));
+      setQueue(prev => prev.filter(c => c.id !== id));
       if (viewingContent?.id === id) setViewingContent(null);
     } catch {}
+  };
+
+  const publishNow = async (id: number) => {
+    if (!confirm('Publish this content now?')) return;
+    setPublishingId(id);
+    try {
+      const r = await fetch(`${API}/api/content/${websiteId}/${id}/publish`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        alert(`Published! ${d.published_url ? `URL: ${d.published_url}` : ''}`);
+        fetchQueue();
+        fetchLibrary();
+      } else if (d.platform === 'custom') {
+        alert('This is a custom site. Copy the HTML and paste it into your CMS manually.');
+      } else {
+        alert(d.error || 'Publish failed');
+      }
+    } catch { alert('Failed to publish'); }
+    finally { setPublishingId(null); }
+  };
+
+  const cancelScheduled = async (id: number) => {
+    if (!confirm('Cancel scheduled publish?')) return;
+    setCancellingId(id);
+    try {
+      const r = await fetch(`${API}/api/content/${websiteId}/${id}/cancel`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        fetchQueue();
+        fetchLibrary();
+      } else {
+        alert(d.error || 'Cancel failed');
+      }
+    } catch { alert('Failed to cancel'); }
+    finally { setCancellingId(null); }
+  };
+
+  const scheduleItem = async (id: number, dateStr: string, timeStr: string) => {
+    if (!dateStr || !timeStr) return;
+    const scheduled = new Date(`${dateStr}T${timeStr}`);
+    try {
+      const r = await fetch(`${API}/api/content/${websiteId}/${id}/schedule`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publish_date: scheduled.toISOString() })
+      });
+      const d = await r.json();
+      if (d.success) {
+        fetchQueue();
+        fetchLibrary();
+      } else {
+        alert(d.error || 'Schedule failed');
+      }
+    } catch { alert('Failed to schedule'); }
   };
 
   const copyHtml = (html: string) => {
@@ -106,6 +215,45 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
     blog_post: BookOpen, product_description: ShoppingCart,
     landing_page: Layout, faq_page: HelpCircle, how_to_guide: Wrench,
   };
+
+  const statusBadge = (status: string) => {
+    const map: Record<string, string> = {
+      Draft: 'bg-gray-500/20 text-gray-400',
+      Scheduled: 'bg-blue-500/20 text-blue-400',
+      Published: 'bg-green-500/20 text-green-400',
+      Failed: 'bg-red-500/20 text-red-400',
+    };
+    return map[status] || 'bg-gray-500/20 text-gray-400';
+  };
+
+  // Calendar helpers
+  const calendarDays = useMemo(() => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startPadding = firstDay.getDay(); // 0 = Sunday
+    const daysInMonth = lastDay.getDate();
+
+    const days: { date: number; items: QueueItem[] }[] = [];
+    for (let i = 0; i < startPadding; i++) days.push({ date: 0, items: [] });
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dayItems = queue.filter(item => {
+        if (!item.scheduled_publish_date) return false;
+        const sd = new Date(item.scheduled_publish_date);
+        return sd.getFullYear() === year && sd.getMonth() === month && sd.getDate() === d;
+      });
+      days.push({ date: d, items: dayItems });
+    }
+    return days;
+  }, [calendarDate, queue]);
+
+  const filteredQueue = useMemo(() => {
+    if (queueFilter === 'all') return queue;
+    return queue.filter(item => item.status.toLowerCase() === queueFilter);
+  }, [queue, queueFilter]);
+
+  const monthLabel = calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   return (
     <div className="space-y-4">
@@ -119,13 +267,14 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {[
           { id: 'create' as const, label: 'Create Content', icon: Plus },
           { id: 'ideas' as const, label: 'Content Ideas', icon: Lightbulb },
           { id: 'library' as const, label: `Library (${library.length})`, icon: BookOpen },
+          { id: 'queue' as const, label: `Publishing Queue (${queueCounts.total})`, icon: CalendarDays },
         ].map(t => (
-          <button key={t.id} onClick={() => { setActiveTab(t.id); if (t.id === 'ideas' && !ideas.length) fetchIdeas(); if (t.id === 'library') fetchLibrary(); }}
+          <button key={t.id} onClick={() => { setActiveTab(t.id); if (t.id === 'ideas' && !ideas.length) fetchIdeas(); if (t.id === 'library') fetchLibrary(); if (t.id === 'queue') fetchQueue(); }}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
               activeTab === t.id ? 'bg-purple-500/30 text-white border border-purple-500/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'
             }`}>
@@ -194,6 +343,32 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
               <textarea value={instructions} onChange={e => setInstructions(e.target.value)}
                 placeholder="Any specific points to include, competitors to reference, etc."
                 className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-purple-500 h-20 resize-none" />
+            </div>
+
+            {/* Schedule picker */}
+            <div className="bg-blue-500/5 rounded-lg p-3 border border-blue-500/10">
+              <label className="flex items-center gap-2 text-blue-400 text-xs font-medium mb-2">
+                <Clock className="w-3.5 h-3.5" /> Schedule for Later (optional)
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="date"
+                  value={scheduleDate}
+                  onChange={e => setScheduleDate(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm [color-scheme:dark]"
+                />
+                <input
+                  type="time"
+                  value={scheduleTime}
+                  onChange={e => setScheduleTime(e.target.value)}
+                  className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm [color-scheme:dark]"
+                />
+              </div>
+              {scheduleDate && scheduleTime && (
+                <p className="text-blue-400/70 text-[10px] mt-1.5">
+                  Will be scheduled for {new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString()}
+                </p>
+              )}
             </div>
 
             <button onClick={generateContent} disabled={generating || !topic.trim()}
@@ -362,7 +537,7 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
                     <p className="text-white text-sm font-medium truncate">{item.title}</p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-xs text-gray-500">{item.content_type}</span>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${item.status === 'Published' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{item.status}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusBadge(item.status)}`}>{item.status}</span>
                     </div>
                   </div>
                 </div>
@@ -375,6 +550,174 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ═══ PUBLISHING QUEUE ═══ */}
+      {activeTab === 'queue' && (
+        <div className="space-y-4">
+          {/* Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[
+              { label: 'Total', count: queueCounts.total, color: 'text-white' },
+              { label: 'Draft', count: queueCounts.draft, color: 'text-gray-400' },
+              { label: 'Scheduled', count: queueCounts.scheduled, color: 'text-blue-400' },
+              { label: 'Published', count: queueCounts.published, color: 'text-green-400' },
+              { label: 'Failed', count: queueCounts.failed, color: 'text-red-400' },
+            ].map(s => (
+              <div key={s.label} className="bg-white/5 rounded-lg p-3 border border-white/10 text-center">
+                <p className={`text-xl font-bold ${s.color}`}>{s.count}</p>
+                <p className="text-gray-500 text-xs">{s.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Calendar View */}
+          <div className="bg-white/5 rounded-xl p-5 border border-white/10">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-purple-400" /> Content Calendar
+              </h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setCalendarDate(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+                  className="p-1.5 bg-white/10 rounded-lg hover:bg-white/20 text-gray-300">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-white text-sm font-medium min-w-[140px] text-center">{monthLabel}</span>
+                <button onClick={() => setCalendarDate(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+                  className="p-1.5 bg-white/10 rounded-lg hover:bg-white/20 text-gray-300">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Day headers */}
+            <div className="grid grid-cols-7 gap-1 mb-1">
+              {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+                <div key={d} className="text-center text-gray-500 text-[10px] font-medium py-1">{d}</div>
+              ))}
+            </div>
+
+            {/* Calendar grid */}
+            <div className="grid grid-cols-7 gap-1">
+              {calendarDays.map((day, idx) => (
+                <div key={idx} className={`min-h-[80px] rounded-lg border border-white/5 p-1.5 ${day.date === 0 ? 'bg-transparent border-transparent' : 'bg-white/5'}`}>
+                  {day.date > 0 && (
+                    <>
+                      <span className={`text-[10px] font-medium ${
+                        new Date().getDate() === day.date && new Date().getMonth() === calendarDate.getMonth() && new Date().getFullYear() === calendarDate.getFullYear()
+                          ? 'text-purple-400' : 'text-gray-500'
+                      }`}>{day.date}</span>
+                      <div className="mt-1 space-y-0.5">
+                        {day.items.slice(0, 2).map(item => (
+                          <div key={item.id} className="text-[9px] truncate px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 cursor-pointer hover:bg-blue-500/30"
+                            onClick={() => viewContent(item.id)}>
+                            {item.title}
+                          </div>
+                        ))}
+                        {day.items.length > 2 && (
+                          <div className="text-[9px] text-gray-500 px-1">+{day.items.length - 2} more</div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Queue List */}
+          <div className="bg-white/5 rounded-xl p-5 border border-white/10">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+                <Clock className="w-4 h-4 text-purple-400" /> Queue
+              </h3>
+              <div className="flex items-center gap-2">
+                {['all','draft','scheduled','published','failed'].map(f => (
+                  <button key={f} onClick={() => setQueueFilter(f)}
+                    className={`text-xs px-2.5 py-1 rounded-lg capitalize transition-all ${
+                      queueFilter === f ? 'bg-purple-500/30 text-white border border-purple-500/50' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'
+                    }`}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {loadingQueue && (
+              <div className="text-center py-8">
+                <Loader2 className="w-6 h-6 text-purple-400 animate-spin mx-auto" />
+              </div>
+            )}
+
+            {!loadingQueue && filteredQueue.length === 0 && (
+              <div className="text-center py-8 text-gray-500 text-sm">
+                <CalendarDays className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                No items in this queue.
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {filteredQueue.map(item => {
+                const Icon = typeIcons[item.content_type?.toLowerCase().replace(/ /g, '_')] || FileText;
+                return (
+                  <div key={item.id} className="bg-white/5 rounded-lg p-3 border border-white/10 flex items-center justify-between hover:bg-white/8 transition-all">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <div className="p-1.5 bg-white/10 rounded-lg shrink-0"><Icon className="w-3.5 h-3.5 text-purple-400" /></div>
+                      <div className="min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{item.title}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <span className="text-xs text-gray-500">{item.content_type}</span>
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${statusBadge(item.status)}`}>{item.status}</span>
+                          {item.scheduled_publish_date && (
+                            <span className="text-xs text-blue-400 flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> {new Date(item.scheduled_publish_date).toLocaleString()}
+                            </span>
+                          )}
+                          {item.published_at && (
+                            <span className="text-xs text-green-400 flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" /> {new Date(item.published_at).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 ml-3">
+                      {(item.status === 'Draft' || item.status === 'Scheduled' || item.status === 'Failed') && (
+                        <button
+                          onClick={() => publishNow(item.id)}
+                          disabled={publishingId === item.id}
+                          className="bg-green-500/20 text-green-400 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-green-500/30 flex items-center gap-1 disabled:opacity-50">
+                          {publishingId === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                          Publish Now
+                        </button>
+                      )}
+                      {item.status === 'Scheduled' && (
+                        <button
+                          onClick={() => cancelScheduled(item.id)}
+                          disabled={cancellingId === item.id}
+                          className="bg-red-500/20 text-red-400 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-red-500/30 flex items-center gap-1 disabled:opacity-50">
+                          {cancellingId === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+                          Cancel
+                        </button>
+                      )}
+                      {item.status === 'Draft' && (
+                        <ScheduleInlinePicker
+                          onSchedule={(date, time) => scheduleItem(item.id, date, time)}
+                        />
+                      )}
+                      <button onClick={() => viewContent(item.id)} className="bg-white/10 text-gray-300 px-2.5 py-1.5 rounded-lg text-xs hover:bg-white/20 flex items-center gap-1">
+                        <Eye className="w-3 h-3" />
+                      </button>
+                      <button onClick={() => deleteContent(item.id)} className="text-gray-600 hover:text-red-400 p-1.5">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 
@@ -414,6 +757,48 @@ export default function ContentWriter({ websiteId }: { websiteId: number }) {
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// Inline schedule picker for queue items
+function ScheduleInlinePicker({ onSchedule }: { onSchedule: (date: string, time: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className="bg-blue-500/20 text-blue-400 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-500/30 flex items-center gap-1">
+        <Calendar className="w-3 h-3" /> Schedule
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="date"
+        value={date}
+        onChange={e => setDate(e.target.value)}
+        className="bg-white/10 border border-white/20 rounded px-2 py-1 text-white text-[10px] [color-scheme:dark]"
+      />
+      <input
+        type="time"
+        value={time}
+        onChange={e => setTime(e.target.value)}
+        className="bg-white/10 border border-white/20 rounded px-2 py-1 text-white text-[10px] [color-scheme:dark]"
+      />
+      <button
+        onClick={() => { onSchedule(date, time); setOpen(false); setDate(''); setTime(''); }}
+        disabled={!date || !time}
+        className="bg-blue-500/30 text-blue-300 px-2 py-1 rounded text-[10px] hover:bg-blue-500/40 disabled:opacity-50">
+        <CheckCircle className="w-3 h-3" />
+      </button>
+      <button onClick={() => setOpen(false)} className="text-gray-500 hover:text-gray-300 px-1 py-1">
+        <X className="w-3 h-3" />
+      </button>
     </div>
   );
 }

@@ -350,3 +350,123 @@ def _fallback_suggestions(pages, striking_keywords, orphan_pages):
             })
 
     return suggestions
+
+
+def get_link_graph(website_id: int) -> Dict[str, Any]:
+    """
+    Return the internal link graph as nodes and edges for visualization.
+    Uses the same crawling logic as analyze_internal_linking but returns
+    a graph-friendly structure.
+    """
+    import asyncio
+    db = SessionLocal()
+    try:
+        website = db.query(Website).filter(Website.id == website_id).first()
+        if not website:
+            return {"error": "Website not found"}
+
+        domain = website.domain
+        base_url = f"https://{domain}" if not domain.startswith("http") else domain
+
+        # Get pages from latest audit
+        latest_audit = db.query(AuditReport).filter(
+            AuditReport.website_id == website_id
+        ).order_by(AuditReport.audit_date.desc()).first()
+
+        pages_to_scan = [base_url]
+        if latest_audit and latest_audit.detailed_findings:
+            summaries = latest_audit.detailed_findings.get("page_summaries", [])
+            for ps in summaries[:50]:
+                url = ps.get("url", "")
+                if url and url not in pages_to_scan:
+                    pages_to_scan.append(url)
+
+        # Crawl pages
+        async def _crawl():
+            connector = aiohttp.TCPConnector(limit=5, ssl=False)
+            async with aiohttp.ClientSession(
+                connector=connector,
+                headers={"User-Agent": "SEOIntelligenceBot/2.0"}
+            ) as session:
+                page_data = []
+                for url in pages_to_scan[:40]:
+                    data = await _crawl_page_for_links(session, url)
+                    if not data.get("error"):
+                        page_data.append(data)
+                    await asyncio.sleep(0.3)
+                return page_data
+
+        page_data = asyncio.run(_crawl())
+
+        if not page_data:
+            return {"error": "Could not crawl any pages"}
+
+        # Build link graph
+        inbound_count = defaultdict(int)
+        inbound_from = defaultdict(list)
+        outbound_count = {}
+        edges = []
+        path_to_url = {}
+        path_to_title = {}
+
+        for page in page_data:
+            page_path = page["path"]
+            path_to_url[page_path] = page["url"]
+            path_to_title[page_path] = page["title"] or page_path
+            outbound_count[page_path] = page["internal_link_count"]
+            for link in page.get("internal_links", []):
+                target_path = link["path"]
+                inbound_count[target_path] += 1
+                inbound_from[target_path].append({"from": page_path, "anchor": link["anchor"]})
+                edges.append({
+                    "source": page_path,
+                    "target": target_path,
+                    "anchor": link["anchor"],
+                })
+
+        # Identify hubs and orphans
+        hub_threshold = 5
+        all_paths = {p["path"] for p in page_data}
+        hub_paths = {path for path, count in inbound_count.items() if count >= hub_threshold}
+        orphan_paths = {path for path in all_paths if inbound_count.get(path, 0) <= 1 and path != "/"}
+
+        nodes = []
+        for page in page_data:
+            path = page["path"]
+            inc = inbound_count.get(path, 0)
+            out = outbound_count.get(path, 0)
+            is_hub = path in hub_paths
+            is_orphan = path in orphan_paths
+            nodes.append({
+                "id": path,
+                "url": page["url"],
+                "title": page["title"] or path,
+                "inbound": inc,
+                "outbound": out,
+                "is_hub": is_hub,
+                "is_orphan": is_orphan,
+            })
+
+        # Deduplicate edges for cleaner visualization
+        seen_edges = set()
+        unique_edges = []
+        for e in edges:
+            key = (e["source"], e["target"])
+            if key not in seen_edges:
+                seen_edges.add(key)
+                unique_edges.append(e)
+
+        return {
+            "domain": domain,
+            "nodes": nodes,
+            "edges": unique_edges,
+            "total_pages": len(nodes),
+            "total_edges": len(unique_edges),
+        }
+
+    except Exception as e:
+        print(f"[LinkGraph] Error: {e}")
+        import traceback; traceback.print_exc()
+        return {"error": str(e)}
+    finally:
+        db.close()

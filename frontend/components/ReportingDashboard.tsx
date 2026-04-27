@@ -105,6 +105,165 @@ function Chart({ data, xKey, yKey, color = '#a855f7', label = '', height = 140, 
   );
 }
 
+// ─── Multi-Line Health Score Trend Chart ───
+interface TrendLine {
+  key: string;
+  label: string;
+  color: string;
+}
+
+const TREND_LINES: TrendLine[] = [
+  { key: 'health_score', label: 'Health', color: '#7c6cf9' },
+  { key: 'technical_score', label: 'Technical', color: '#4ade80' },
+  { key: 'content_score', label: 'Content', color: '#fbbf24' },
+  { key: 'performance_score', label: 'Performance', color: '#f87171' },
+  { key: 'mobile_score', label: 'Mobile', color: '#60a5fa' },
+  { key: 'security_score', label: 'Security', color: '#06b6d4' },
+];
+
+function HealthScoreTrendChart({ data, height = 260 }: { data: any[]; height?: number }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const [active, setActive] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(TREND_LINES.map(l => [l.key, true]))
+  );
+
+  if (!data.length) return null;
+
+  const activeLines = TREND_LINES.filter(l => active[l.key]);
+  const allVals = data.flatMap(d => activeLines.map(l => Number(d[l.key]) || 0));
+  const maxV = allVals.length ? Math.max(...allVals, 100) : 100;
+  const minV = allVals.length ? Math.min(...allVals, 0) : 0;
+  const range = maxV - minV || 1;
+  const w = 800, h = height, padL = 50, padR = 20, padT = 20, padB = 40;
+
+  const pointsFor = (key: string) =>
+    data.map((d, i) => ({
+      x: padL + (i / (data.length - 1 || 1)) * (w - padL - padR),
+      y: padT + (1 - ((Number(d[key]) || 0) - minV) / range) * (h - padT - padB),
+      val: Number(d[key]) || 0,
+    }));
+
+  const linePoints = activeLines.map(line => ({
+    ...line,
+    points: pointsFor(line.key),
+    pathD: pointsFor(line.key).map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' '),
+  }));
+
+  const toggleLine = (key: string) => setActive(prev => ({ ...prev, [key]: !prev[key] }));
+
+  return (
+    <div className="relative">
+      {/* Legend */}
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <span className="text-xs text-gray-400 font-medium mr-1">Toggle:</span>
+        {TREND_LINES.map(line => (
+          <button
+            key={line.key}
+            onClick={() => toggleLine(line.key)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all border ${
+              active[line.key]
+                ? 'bg-white/10 text-white border-white/20'
+                : 'bg-transparent text-gray-500 border-white/5 line-through opacity-50'
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: line.color }} />
+            {line.label}
+          </button>
+        ))}
+      </div>
+
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: `${height}px` }} onMouseLeave={() => setHover(null)}>
+        {/* Grid lines */}
+        {[0, 0.25, 0.5, 0.75, 1].map(pct => {
+          const y = padT + pct * (h - padT - padB);
+          const val = maxV - pct * range;
+          return (
+            <g key={pct}>
+              <line x1={padL} y1={y} x2={w - padR} y2={y} stroke="rgba(255,255,255,0.05)" />
+              <text x={padL - 8} y={y + 3} fill="#888" fontSize="9" textAnchor="end">{Math.round(val)}</text>
+            </g>
+          );
+        })}
+
+        {/* X labels */}
+        {data.length <= 12 ? data.map((d, i) => (
+          <text key={i} x={padL + (i / (data.length - 1 || 1)) * (w - padL - padR)} y={h - 10} fill="#888" fontSize="8" textAnchor="middle">
+            {String(d.audit_date || d.date).slice(5, 10)}
+          </text>
+        )) : [0, Math.floor(data.length / 4), Math.floor(data.length / 2), Math.floor(data.length * 3 / 4), data.length - 1].map(i => (
+          <text key={i} x={padL + (i / (data.length - 1 || 1)) * (w - padL - padR)} y={h - 10} fill="#888" fontSize="8" textAnchor="middle">
+            {String(data[i].audit_date || data[i].date).slice(5, 10)}
+          </text>
+        ))}
+
+        {/* Lines */}
+        {linePoints.map(lp => (
+          <g key={lp.key}>
+            <path d={lp.pathD} fill="none" stroke={lp.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+            {lp.points.map((p, i) => (
+              <circle
+                key={i}
+                cx={p.x} cy={p.y} r={hover === i ? 4 : 2.5}
+                fill={lp.color}
+                stroke={hover === i ? 'white' : 'transparent'}
+                strokeWidth="1.5"
+              />
+            ))}
+          </g>
+        ))}
+
+        {/* Hover zones */}
+        {data.map((_, i) => {
+          const x = padL + (i / (data.length - 1 || 1)) * (w - padL - padR);
+          return (
+            <rect
+              key={i}
+              x={x - (w - padL - padR) / (data.length - 1 || 1) / 2}
+              y={padT}
+              width={(w - padL - padR) / (data.length - 1 || 1)}
+              height={h - padT - padB}
+              fill="transparent"
+              onMouseEnter={() => setHover(i)}
+            />
+          );
+        })}
+
+        {/* Hover tooltip */}
+        {hover !== null && (
+          <g>
+            <line
+              x1={padL + (hover / (data.length - 1 || 1)) * (w - padL - padR)}
+              y1={padT}
+              x2={padL + (hover / (data.length - 1 || 1)) * (w - padL - padR)}
+              y2={h - padB}
+              stroke="rgba(255,255,255,0.15)"
+              strokeWidth="1"
+              strokeDasharray="4,4"
+            />
+            <g transform={`translate(${Math.min(Math.max(padL + (hover / (data.length - 1 || 1)) * (w - padL - padR) - 70, 10), w - 150)}, ${padT + 4})`}>
+              <rect x={0} y={0} width={140} height={18 + activeLines.length * 16} rx={8}
+                fill="rgba(10,10,25,0.95)" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
+              <text x={70} y={14} fill="#ccc" fontSize="9" textAnchor="middle" fontWeight="600">
+                {String(data[hover].audit_date || data[hover].date).slice(0, 10)}
+              </text>
+              {activeLines.map((line, li) => {
+                const v = Number(data[hover][line.key]) || 0;
+                return (
+                  <g key={line.key} transform={`translate(0, ${18 + li * 16})`}>
+                    <circle cx={12} cy={4} r={3} fill={line.color} />
+                    <text x={22} y={7} fill="#ddd" fontSize="10">{line.label}</text>
+                    <text x={128} y={7} fill="white" fontSize="10" textAnchor="end" fontWeight="bold">{Math.round(v)}</text>
+                  </g>
+                );
+              })}
+            </g>
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
 // ─── Position Chart (inverted: lower position = higher on chart) ───
 function PositionChart({ data, xKey, yKey, height = 140 }: { data: any[]; xKey: string; yKey: string; height?: number; }) {
   const [hover, setHover] = useState<number | null>(null);
@@ -181,6 +340,8 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
   const [selectedKeyword, setSelectedKeyword] = useState<string | null>(null);
   const [keywordTrend, setKeywordTrend] = useState<any[] | null>(null);
   const [trendLoading, setTrendLoading] = useState(false);
+  const [auditHistory, setAuditHistory] = useState<any[]>([]);
+  const [auditHistoryLoading, setAuditHistoryLoading] = useState(false);
 
   const API = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -202,6 +363,22 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
       .then(d => { if (d && !d.error) setReport(d); })
       .catch(() => {}).finally(() => setLoading(false));
   }, [websiteId, selectedMonth, API]);
+
+  useEffect(() => {
+    setAuditHistoryLoading(true);
+    fetch(`${API}/api/audit/${websiteId}/history?limit=90`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (Array.isArray(d)) {
+          // API returns newest first; reverse for chronological order
+          setAuditHistory(d.reverse());
+        } else {
+          setAuditHistory([]);
+        }
+      })
+      .catch(() => setAuditHistory([]))
+      .finally(() => setAuditHistoryLoading(false));
+  }, [websiteId, API]);
 
   const downloadPdf = async () => {
     setDownloading(true);
@@ -268,6 +445,23 @@ export default function ReportingDashboard({ websiteId }: { websiteId: number })
           </button>
         </div>
       </div>
+
+      {/* Health Score Trend Chart */}
+      {(auditHistory.length > 1 || auditHistoryLoading) && (
+        <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-white font-semibold flex items-center gap-2 text-sm">
+              <Activity className="w-4 h-4 text-purple-400" /> Health Score Trend (Last 90 Days)
+            </h3>
+            {auditHistoryLoading && <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />}
+          </div>
+          {auditHistory.length > 1 ? (
+            <HealthScoreTrendChart data={auditHistory} height={260} />
+          ) : (
+            <p className="text-gray-500 text-xs text-center py-8">Not enough history to show trend</p>
+          )}
+        </div>
+      )}
 
       {/* Health Score Card */}
       {audit && (

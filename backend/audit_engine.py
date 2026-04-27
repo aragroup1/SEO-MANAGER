@@ -585,71 +585,160 @@ class SEOAuditEngine:
             self.ssl_days_remaining = 0
 
     async def _check_core_web_vitals(self):
-        """Check Core Web Vitals using Google PageSpeed Insights API (free, no key needed)."""
+        """Check Core Web Vitals using Google PageSpeed Insights API (free, no key needed).
+        Fetches both mobile and desktop data for comparison."""
         import httpx
-        self.cwv_data = {}
-        try:
-            url = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
-            params = {"url": self.base_url, "strategy": "mobile", "category": ["performance", "seo", "accessibility"]}
-            
-            api_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "")
+        self.cwv_data = {"mobile": {}, "desktop": {}}
+        self.mobile_score = 0
+        self.desktop_score = 0
+
+        url = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+        api_key = os.getenv("GOOGLE_PAGESPEED_API_KEY", "")
+
+        async def _fetch_strategy(strategy: str):
+            params = {"url": self.base_url, "strategy": strategy, "category": ["performance", "seo", "accessibility"]}
             if api_key:
                 params["key"] = api_key
-
             async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.get(url, params=params)
                 if resp.status_code == 200:
-                    data = resp.json()
-                    lhr = data.get("lighthouseResult", {})
-                    audits = lhr.get("audits", {})
-                    categories = lhr.get("categories", {})
+                    return resp.json()
+                print(f"[Audit] PageSpeed API error ({strategy}): {resp.status_code}")
+                return None
 
-                    lcp = round(float(audits.get("largest-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
-                    cls_val = round(float(audits.get("cumulative-layout-shift", {}).get("numericValue", 0)), 3)
-                    tbt = round(float(audits.get("total-blocking-time", {}).get("numericValue", 0)))
-                    fcp = round(float(audits.get("first-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
-                    si = round(float(audits.get("speed-index", {}).get("numericValue", 0)) / 1000, 2)
-                    perf_score = round((categories.get("performance", {}).get("score", 0) or 0) * 100)
-                    seo_score = round((categories.get("seo", {}).get("score", 0) or 0) * 100)
-                    a11y_score = round((categories.get("accessibility", {}).get("score", 0) or 0) * 100)
+        try:
+            mobile_data, desktop_data = await asyncio.gather(
+                _fetch_strategy("mobile"),
+                _fetch_strategy("desktop")
+            )
 
-                    self.cwv_data = {
-                        "lcp": lcp, "cls": cls_val, "tbt": tbt, "fcp": fcp,
-                        "speed_index": si, "performance_score": perf_score,
-                        "seo_score": seo_score, "accessibility_score": a11y_score,
-                    }
+            # ─── Process Mobile ───
+            if mobile_data:
+                lhr = mobile_data.get("lighthouseResult", {})
+                audits = lhr.get("audits", {})
+                categories = lhr.get("categories", {})
 
-                    # Generate issues from CWV
-                    if lcp > 4.0:
-                        self._add_issue("Poor LCP (Largest Contentful Paint)", IssueSeverity.ERROR, "Performance",
-                                      "LCP is " + str(lcp) + "s (should be under 2.5s). The main content takes too long to load.",
-                                      how_to_fix="Optimize largest image/text block. Use lazy loading, compress images, improve server response time.")
-                    elif lcp > 2.5:
-                        self._add_issue("Needs Improvement: LCP", IssueSeverity.WARNING, "Performance",
-                                      "LCP is " + str(lcp) + "s (good is under 2.5s).",
-                                      how_to_fix="Optimize image loading and server response time.")
+                lcp = round(float(audits.get("largest-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
+                cls_val = round(float(audits.get("cumulative-layout-shift", {}).get("numericValue", 0)), 3)
+                tbt = round(float(audits.get("total-blocking-time", {}).get("numericValue", 0)))
+                fcp = round(float(audits.get("first-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
+                si = round(float(audits.get("speed-index", {}).get("numericValue", 0)) / 1000, 2)
+                perf_score = round((categories.get("performance", {}).get("score", 0) or 0) * 100)
+                seo_score = round((categories.get("seo", {}).get("score", 0) or 0) * 100)
+                a11y_score = round((categories.get("accessibility", {}).get("score", 0) or 0) * 100)
 
-                    if cls_val > 0.25:
-                        self._add_issue("Poor CLS (Cumulative Layout Shift)", IssueSeverity.ERROR, "Performance",
-                                      "CLS is " + str(cls_val) + " (should be under 0.1). Page elements shift during loading.",
-                                      how_to_fix="Set explicit width/height on images and embeds. Avoid inserting content above existing content.")
-                    elif cls_val > 0.1:
-                        self._add_issue("Needs Improvement: CLS", IssueSeverity.WARNING, "Performance",
-                                      "CLS is " + str(cls_val) + " (good is under 0.1).",
-                                      how_to_fix="Add dimensions to images and avoid dynamic content injection.")
+                self.cwv_data["mobile"] = {
+                    "lcp": lcp, "cls": cls_val, "tbt": tbt, "fcp": fcp,
+                    "speed_index": si, "performance_score": perf_score,
+                    "seo_score": seo_score, "accessibility_score": a11y_score,
+                }
+                self.mobile_score = perf_score
 
-                    if tbt > 600:
-                        self._add_issue("Poor TBT (Total Blocking Time)", IssueSeverity.ERROR, "Performance",
-                                      "TBT is " + str(tbt) + "ms (should be under 200ms). JavaScript is blocking the main thread.",
-                                      how_to_fix="Reduce JavaScript execution time. Code-split, defer non-critical scripts, remove unused JS.")
-                    elif tbt > 200:
-                        self._add_issue("Needs Improvement: TBT", IssueSeverity.WARNING, "Performance",
-                                      "TBT is " + str(tbt) + "ms (good is under 200ms).",
-                                      how_to_fix="Defer non-critical JavaScript and reduce third-party scripts.")
+                # Generate mobile-specific issues
+                if lcp > 4.0:
+                    self._add_issue("Poor Mobile LCP (Largest Contentful Paint)", IssueSeverity.ERROR, "Mobile",
+                                  f"Mobile LCP is {lcp}s (should be under 2.5s). The main content takes too long to load on mobile devices.",
+                                  how_to_fix="Optimize largest image/text block for mobile. Use responsive images, lazy loading, compress images, improve server response time.")
+                elif lcp > 2.5:
+                    self._add_issue("Needs Improvement: Mobile LCP", IssueSeverity.WARNING, "Mobile",
+                                  f"Mobile LCP is {lcp}s (good is under 2.5s).",
+                                  how_to_fix="Optimize image loading and server response time for mobile.")
 
-                    print("[Audit] CWV: LCP=" + str(lcp) + "s, CLS=" + str(cls_val) + ", TBT=" + str(tbt) + "ms, Perf=" + str(perf_score))
-                else:
-                    print("[Audit] PageSpeed API error: " + str(resp.status_code))
+                if cls_val > 0.25:
+                    self._add_issue("Poor Mobile CLS (Cumulative Layout Shift)", IssueSeverity.ERROR, "Mobile",
+                                  f"Mobile CLS is {cls_val} (should be under 0.1). Page elements shift during loading on mobile.",
+                                  how_to_fix="Set explicit width/height on images and embeds. Reserve space for ads/dynamic content.")
+                elif cls_val > 0.1:
+                    self._add_issue("Needs Improvement: Mobile CLS", IssueSeverity.WARNING, "Mobile",
+                                  f"Mobile CLS is {cls_val} (good is under 0.1).",
+                                  how_to_fix="Add dimensions to images and avoid dynamic content injection on mobile.")
+
+                if tbt > 600:
+                    self._add_issue("Poor Mobile TBT (Total Blocking Time)", IssueSeverity.ERROR, "Mobile",
+                                  f"Mobile TBT is {tbt}ms (should be under 200ms). JavaScript is blocking the main thread on mobile.",
+                                  how_to_fix="Reduce JavaScript execution time. Code-split, defer non-critical scripts, remove unused JS.")
+                elif tbt > 200:
+                    self._add_issue("Needs Improvement: Mobile TBT", IssueSeverity.WARNING, "Mobile",
+                                  f"Mobile TBT is {tbt}ms (good is under 200ms).",
+                                  how_to_fix="Defer non-critical JavaScript and reduce third-party scripts for mobile.")
+
+                # Mobile-specific PageSpeed audits
+                viewport_audit = audits.get("viewport", {})
+                if viewport_audit.get("score") == 0:
+                    self._add_issue("Viewport Not Set", IssueSeverity.ERROR, "Mobile",
+                                  "The page does not have a proper viewport meta tag for mobile devices.",
+                                  how_to_fix="Add <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"> to the <head> of all pages.")
+
+                tap_targets_audit = audits.get("tap-targets", {})
+                if tap_targets_audit.get("score", 1) < 1:
+                    tap_details = tap_targets_audit.get("details", {})
+                    tap_items = tap_details.get("items", [])
+                    self._add_issue("Touch Targets Too Small or Overlapping", IssueSeverity.WARNING, "Mobile",
+                                  f"{len(tap_items)} tap targets are too small or too close together on mobile.",
+                                  how_to_fix="Increase button/link sizes to at least 48x48px and add spacing between interactive elements.")
+
+                font_size_audit = audits.get("font-size", {})
+                if font_size_audit.get("score", 1) < 1:
+                    font_details = font_size_audit.get("details", {})
+                    font_items = font_details.get("items", [])
+                    self._add_issue("Text Too Small to Read on Mobile", IssueSeverity.WARNING, "Mobile",
+                                  f"{len(font_items)} text elements are too small to read comfortably on mobile devices.",
+                                  how_to_fix="Use a base font-size of at least 16px (100%) and ensure text is readable without zooming.")
+
+                print(f"[Audit] Mobile CWV: LCP={lcp}s, CLS={cls_val}, TBT={tbt}ms, Perf={perf_score}")
+
+            # ─── Process Desktop ───
+            if desktop_data:
+                lhr = desktop_data.get("lighthouseResult", {})
+                audits = lhr.get("audits", {})
+                categories = lhr.get("categories", {})
+
+                lcp = round(float(audits.get("largest-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
+                cls_val = round(float(audits.get("cumulative-layout-shift", {}).get("numericValue", 0)), 3)
+                tbt = round(float(audits.get("total-blocking-time", {}).get("numericValue", 0)))
+                fcp = round(float(audits.get("first-contentful-paint", {}).get("numericValue", 0)) / 1000, 2)
+                si = round(float(audits.get("speed-index", {}).get("numericValue", 0)) / 1000, 2)
+                perf_score = round((categories.get("performance", {}).get("score", 0) or 0) * 100)
+                seo_score = round((categories.get("seo", {}).get("score", 0) or 0) * 100)
+                a11y_score = round((categories.get("accessibility", {}).get("score", 0) or 0) * 100)
+
+                self.cwv_data["desktop"] = {
+                    "lcp": lcp, "cls": cls_val, "tbt": tbt, "fcp": fcp,
+                    "speed_index": si, "performance_score": perf_score,
+                    "seo_score": seo_score, "accessibility_score": a11y_score,
+                }
+                self.desktop_score = perf_score
+
+                # Generate desktop-specific issues
+                if lcp > 4.0:
+                    self._add_issue("Poor Desktop LCP (Largest Contentful Paint)", IssueSeverity.ERROR, "Performance",
+                                  f"Desktop LCP is {lcp}s (should be under 2.5s).",
+                                  how_to_fix="Optimize largest image/text block. Use lazy loading, compress images, improve server response time.")
+                elif lcp > 2.5:
+                    self._add_issue("Needs Improvement: Desktop LCP", IssueSeverity.WARNING, "Performance",
+                                  f"Desktop LCP is {lcp}s (good is under 2.5s).",
+                                  how_to_fix="Optimize image loading and server response time.")
+
+                if cls_val > 0.25:
+                    self._add_issue("Poor Desktop CLS (Cumulative Layout Shift)", IssueSeverity.ERROR, "Performance",
+                                  f"Desktop CLS is {cls_val} (should be under 0.1).",
+                                  how_to_fix="Set explicit width/height on images and embeds.")
+                elif cls_val > 0.1:
+                    self._add_issue("Needs Improvement: Desktop CLS", IssueSeverity.WARNING, "Performance",
+                                  f"Desktop CLS is {cls_val} (good is under 0.1).",
+                                  how_to_fix="Add dimensions to images and avoid dynamic content injection.")
+
+                if tbt > 600:
+                    self._add_issue("Poor Desktop TBT (Total Blocking Time)", IssueSeverity.ERROR, "Performance",
+                                  f"Desktop TBT is {tbt}ms (should be under 200ms).",
+                                  how_to_fix="Reduce JavaScript execution time. Code-split, defer non-critical scripts.")
+                elif tbt > 200:
+                    self._add_issue("Needs Improvement: Desktop TBT", IssueSeverity.WARNING, "Performance",
+                                  f"Desktop TBT is {tbt}ms (good is under 200ms).",
+                                  how_to_fix="Defer non-critical JavaScript and reduce third-party scripts.")
+
+                print(f"[Audit] Desktop CWV: LCP={lcp}s, CLS={cls_val}, TBT={tbt}ms, Perf={perf_score}")
+
         except Exception as e:
             print("[Audit] CWV check error: " + str(e))
 
@@ -1028,6 +1117,7 @@ class SEOAuditEngine:
             content_score=scores.get("content", 0),
             performance_score=scores.get("performance", 0),
             mobile_score=scores.get("mobile", 0),
+            desktop_score=getattr(self, 'desktop_score', 0),
             security_score=scores.get("security", 0),
             total_issues=len(self.issues),
             critical_issues=critical_count,
@@ -1046,6 +1136,8 @@ class SEOAuditEngine:
                     "pages_crawled": len(self.crawled_urls),
                     "broken_links_count": len(self.broken_links),
                     "core_web_vitals": getattr(self, 'cwv_data', {}),
+                    "mobile_score": getattr(self, 'mobile_score', 0),
+                    "desktop_score": getattr(self, 'desktop_score', 0),
                 }
             }
         )

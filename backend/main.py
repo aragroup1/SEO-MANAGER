@@ -51,7 +51,16 @@ from database import (
     Base, engine, SessionLocal, get_db, DATABASE_URL,
     User, Website, AuditReport, ContentItem, Integration, ProposedFix, KeywordSnapshot, TrackedKeyword,
     CoreWebVitalsSnapshot, NotificationChannel, NotificationLog, ImageAudit, MetaABTest,
-    LocalSEOPresence, UserRole, DatabaseBackup
+    LocalSEOPresence, UserRole, DatabaseBackup, BrokenLink, IndexStatus
+)
+
+# Import sitemap generator
+from sitemap_generator import generate_sitemap, get_sitemap, submit_to_gsc, validate_sitemap
+
+# Import robots.txt generator
+from robots_generator import (
+    generate_robots_txt, validate_robots_txt, check_existing_robots,
+    get_robots_txt, update_robots_txt
 )
 
 app = FastAPI(title="SEO Intelligence Platform")
@@ -395,6 +404,9 @@ async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)
 
     findings = latest_report.detailed_findings or {"issues": [], "recommendations": []}
 
+    raw_data = findings.get("raw_data", {})
+    cwv_data = raw_data.get("core_web_vitals", {})
+
     return {
         "audit": {
             "id": latest_report.id,
@@ -405,6 +417,7 @@ async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)
             "content_score": latest_report.content_score,
             "performance_score": latest_report.performance_score,
             "mobile_score": latest_report.mobile_score,
+            "desktop_score": latest_report.desktop_score,
             "security_score": latest_report.security_score,
             "total_issues": latest_report.total_issues,
             "critical_issues": latest_report.critical_issues,
@@ -414,7 +427,8 @@ async def get_latest_audit_report(website_id: int, db: Session = Depends(get_db)
             "new_issues": 0,
             "fixed_issues": 0,
             "audit_date": latest_report.audit_date.isoformat(),
-            "domain": website.domain
+            "domain": website.domain,
+            "core_web_vitals": cwv_data,
         },
         "issues": findings.get("issues", []),
         "recommendations": findings.get("recommendations", [])
@@ -437,6 +451,7 @@ async def get_audit_history(website_id: int, limit: int = 10, db: Session = Depe
             "content_score": r.content_score,
             "performance_score": r.performance_score,
             "mobile_score": r.mobile_score,
+            "desktop_score": r.desktop_score,
             "security_score": r.security_score,
             "total_issues": r.total_issues,
             "critical_issues": r.critical_issues,
@@ -570,7 +585,46 @@ async def get_content_item(website_id: int, content_id: int, db: Session = Depen
 async def publish_content_item(website_id: int, content_id: int, db: Session = Depends(get_db)):
     """Publish a content item to the connected platform."""
     from content_writer import publish_content
-    result = await publish_content(content_id)
+    result = await publish_content(website_id, content_id)
+    return result
+
+
+@app.post("/api/content/{website_id}/{content_id}/schedule")
+async def schedule_content_item(website_id: int, content_id: int, request: Request, db: Session = Depends(get_db)):
+    """Schedule a content item for publishing."""
+    data = await request.json()
+    publish_date_str = data.get("publish_date")
+    if not publish_date_str:
+        raise HTTPException(status_code=400, detail="publish_date is required")
+    try:
+        publish_date = datetime.fromisoformat(publish_date_str.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid publish_date format. Use ISO 8601.")
+
+    from content_writer import schedule_content
+    result = await schedule_content(website_id, content_id, publish_date)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/api/content/{website_id}/queue")
+async def get_content_queue(website_id: int, db: Session = Depends(get_db)):
+    """Get the publishing queue for a website."""
+    from content_writer import get_publishing_queue
+    result = await get_publishing_queue(website_id)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/api/content/{website_id}/{content_id}/cancel")
+async def cancel_scheduled_content(website_id: int, content_id: int, db: Session = Depends(get_db)):
+    """Cancel a scheduled content item."""
+    from content_writer import cancel_scheduled
+    result = await cancel_scheduled(website_id, content_id)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
     return result
 
 
@@ -683,6 +737,25 @@ Be specific, actionable, and reference actual data. Format with clear sections."
 async def init_google_auth(user_id: int = 1, integration_type: str = "search_console"):
     return {"authorization_url": f"https://accounts.google.com/oauth/authorize?client_id=xxx&redirect_uri=xxx&scope={integration_type}"}
 
+# --- Database Migrations (lightweight, run at startup) ---
+def _run_migrations():
+    """Add missing columns that may not exist in older databases."""
+    try:
+        db = SessionLocal()
+        # Check if desktop_score column exists in audit_reports
+        try:
+            db.execute(text("SELECT desktop_score FROM audit_reports LIMIT 1"))
+        except Exception:
+            print("[Migration] Adding desktop_score column to audit_reports...")
+            db.execute(text("ALTER TABLE audit_reports ADD COLUMN desktop_score FLOAT DEFAULT 0"))
+            db.commit()
+            print("[Migration] desktop_score column added successfully.")
+        db.close()
+    except Exception as e:
+        print(f"[Migration] Migration check failed (non-critical): {e}")
+
+_run_migrations()
+
 # --- Include Routers ---
 from integrations import router as integrations_router
 app.include_router(integrations_router)
@@ -764,6 +837,20 @@ async def analyze_linking(website_id: int, background_tasks: BackgroundTasks, db
             db.rollback()
         return result
     return raw
+
+
+@app.get("/api/linking/{website_id}/graph")
+async def get_linking_graph(website_id: int, db: Session = Depends(get_db)):
+    """Return the internal link graph as nodes and edges for visualization."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from linking_engine import get_link_graph
+    result = get_link_graph(website_id)
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
 
 
 # Content Decay Detection
@@ -978,6 +1065,7 @@ async def get_full_website_summary(website_id: int, db: Session = Depends(get_db
                 "content_score": latest_audit.content_score if latest_audit else None,
                 "performance_score": latest_audit.performance_score if latest_audit else None,
                 "mobile_score": latest_audit.mobile_score if latest_audit else None,
+                "desktop_score": latest_audit.desktop_score if latest_audit else None,
                 "security_score": latest_audit.security_score if latest_audit else None,
                 "total_issues": latest_audit.total_issues if latest_audit else 0,
                 "critical_issues": latest_audit.critical_issues if latest_audit else 0,
@@ -1283,8 +1371,13 @@ async def startup_event():
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS geo_audit JSON",
                 "ALTER TABLE strategist_results ADD COLUMN IF NOT EXISTS geo_audit_at TIMESTAMP",
                 "ALTER TABLE websites ADD COLUMN IF NOT EXISTS autonomy_mode VARCHAR DEFAULT 'manual'",
+                "ALTER TABLE websites ADD COLUMN IF NOT EXISTS sitemap_xml TEXT",
+                "ALTER TABLE websites ADD COLUMN IF NOT EXISTS sitemap_generated_at TIMESTAMP",
+                "ALTER TABLE websites ADD COLUMN IF NOT EXISTS robots_txt TEXT",
                 "ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS auto_approved_at TIMESTAMP",
                 "ALTER TABLE proposed_fixes ADD COLUMN IF NOT EXISTS auto_applied BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE content_calendar ADD COLUMN IF NOT EXISTS scheduled_publish_date TIMESTAMP",
+                "ALTER TABLE content_calendar ADD COLUMN IF NOT EXISTS published_at TIMESTAMP",
                 # Performance indexes
                 "CREATE INDEX IF NOT EXISTS idx_audit_website ON audit_reports(website_id)",
                 "CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_reports(audit_date)",
@@ -1348,6 +1441,20 @@ async def startup_event():
                     checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )""",
                 "CREATE INDEX IF NOT EXISTS idx_imgaudit_website ON image_audits(website_id)",
+                """CREATE TABLE IF NOT EXISTS broken_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    website_id INTEGER NOT NULL,
+                    page_url VARCHAR NOT NULL,
+                    link_url VARCHAR NOT NULL,
+                    anchor_text VARCHAR,
+                    status_code INTEGER,
+                    error_type VARCHAR DEFAULT 'unknown',
+                    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_fixed BOOLEAN DEFAULT 0
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_broken_links_website ON broken_links(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_broken_links_checked ON broken_links(checked_at)",
+                "CREATE INDEX IF NOT EXISTS idx_broken_links_fixed ON broken_links(is_fixed)",
                 """CREATE TABLE IF NOT EXISTS meta_ab_tests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     website_id INTEGER NOT NULL,
@@ -1394,6 +1501,20 @@ async def startup_event():
                     websites_count INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )""",
+                """CREATE TABLE IF NOT EXISTS index_statuses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    website_id INTEGER NOT NULL,
+                    url VARCHAR NOT NULL,
+                    is_indexed BOOLEAN DEFAULT 0,
+                    coverage_state VARCHAR,
+                    last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    check_method VARCHAR DEFAULT 'unknown',
+                    first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_index_status_website ON index_statuses(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_index_status_url ON index_statuses(url)",
+                "CREATE INDEX IF NOT EXISTS idx_index_status_indexed ON index_statuses(is_indexed)",
+                "CREATE INDEX IF NOT EXISTS idx_index_status_checked ON index_statuses(last_checked)",
             ]
             for migration in migrations:
                 try:
@@ -1825,6 +1946,139 @@ async def get_local_schema_endpoint(website_id: int):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: SITEMAP GENERATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/sitemap/{website_id}/generate")
+async def generate_sitemap_endpoint(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Generate a sitemap for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    result = await generate_sitemap(website_id)
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@app.get("/api/sitemap/{website_id}")
+async def get_sitemap_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Get the current sitemap for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    return await get_sitemap(website_id)
+
+
+@app.post("/api/sitemap/{website_id}/submit")
+async def submit_sitemap_endpoint(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Submit sitemap to Google Search Console."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    data = await request.json()
+    sitemap_url = data.get("sitemap_url", "")
+    if not sitemap_url:
+        # Default to domain/sitemap.xml
+        sitemap_url = f"https://{website.domain}/sitemap.xml"
+
+    result = await submit_to_gsc(website_id, sitemap_url)
+    return result
+
+
+@app.get("/api/sitemap/{website_id}/validate")
+async def validate_sitemap_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Validate the current sitemap."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    if not website.sitemap_xml:
+        return {"valid": False, "error": "No sitemap generated yet"}
+
+    validation = validate_sitemap(website.sitemap_xml)
+    return {
+        "valid": validation["valid"],
+        "url_count": validation["url_count"],
+        "errors": validation["errors"],
+        "warnings": validation["warnings"],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEW ENDPOINTS: ROBOTS.TXT GENERATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/robots/{website_id}/generate")
+async def generate_robots_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Generate an optimized robots.txt for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    result = generate_robots_txt(website_id)
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@app.get("/api/robots/{website_id}")
+async def get_robots_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Get the current stored robots.txt for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    return get_robots_txt(website_id)
+
+
+@app.post("/api/robots/{website_id}/validate")
+async def validate_robots_endpoint(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Validate robots.txt content (uses stored or provided content)."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    data = await request.json()
+    content = data.get("content", website.robots_txt or "")
+
+    if not content:
+        return {"valid": False, "error": "No robots.txt content to validate"}
+
+    result = validate_robots_txt(content, website_id)
+    return result
+
+
+@app.get("/api/robots/{website_id}/check")
+async def check_existing_robots_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Check the existing robots.txt on the live website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    result = await check_existing_robots(website_id)
+    return result
+
+
+@app.put("/api/robots/{website_id}")
+async def update_robots_endpoint(website_id: int, request: Request, db: Session = Depends(get_db)):
+    """Update the stored robots.txt with edited content."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    data = await request.json()
+    content = data.get("content", "")
+    result = update_robots_txt(website_id, content)
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # NEW ENDPOINTS: MULTI-USER
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1880,6 +2134,135 @@ async def get_website_members(website_id: int):
         return [{"user_id": r.user_id, "role": r.role} for r in roles]
     finally:
         db.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BROKEN LINK CHECKER ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/links/{website_id}/scan")
+async def start_link_scan(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Start a broken link scan for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    async def _run_scan():
+        from link_checker import scan_broken_links
+        await scan_broken_links(website_id)
+
+    background_tasks.add_task(_run_scan)
+    return {
+        "status": "success",
+        "message": f"Broken link scan started for {website.domain}. Results will appear shortly."
+    }
+
+
+@app.get("/api/links/{website_id}/broken")
+async def get_broken_links_endpoint(
+    website_id: int,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Get broken links for a website, optionally filtered by error type."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from link_checker import get_broken_links
+    results = get_broken_links(website_id, status_filter=status)
+    return {"broken_links": results, "count": len(results)}
+
+
+@app.get("/api/links/{website_id}/summary")
+async def get_link_summary_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Get link health summary for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from link_checker import get_link_health_summary
+    return get_link_health_summary(website_id)
+
+
+@app.post("/api/links/{link_id}/mark-fixed")
+async def mark_link_fixed_endpoint(link_id: int, db: Session = Depends(get_db)):
+    """Mark a broken link as fixed."""
+    from link_checker import mark_link_fixed
+    result = mark_link_fixed(link_id)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INDEX TRACKER ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/index/{website_id}/sync")
+async def sync_index_status_endpoint(
+    website_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Sync index status for all known URLs of a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    async def _run_sync():
+        from index_tracker import sync_index_status
+        result = await sync_index_status(website_id)
+        print(f"[IndexTracker] Sync complete for {website.domain}: {result.get('checked', 0)} URLs checked")
+
+    background_tasks.add_task(_run_sync)
+    return {
+        "status": "syncing",
+        "message": f"Index status sync started for {website.domain}. Results will appear shortly."
+    }
+
+
+@app.get("/api/index/{website_id}")
+async def get_index_statuses_endpoint(
+    website_id: int,
+    indexed: Optional[bool] = None,
+    limit: int = 500,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """Get all index statuses for a website with optional filter."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from index_tracker import get_index_statuses
+    return get_index_statuses(website_id, indexed=indexed, limit=limit, offset=offset)
+
+
+@app.get("/api/index/{website_id}/summary")
+async def get_index_summary_endpoint(website_id: int, db: Session = Depends(get_db)):
+    """Get index summary stats for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from index_tracker import get_index_summary
+    return get_index_summary(website_id)
+
+
+@app.get("/api/index/{website_id}/trends")
+async def get_index_trends_endpoint(
+    website_id: int,
+    days: int = 30,
+    db: Session = Depends(get_db)
+):
+    """Get index trends over time for a website."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    from index_tracker import get_index_trends
+    return get_index_trends(website_id, days=days)
 
 
 if __name__ == "__main__":

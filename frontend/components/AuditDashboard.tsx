@@ -8,9 +8,33 @@ import {
   TrendingUp, TrendingDown, Minus, Eye, Download,
   RefreshCw, Calendar, Filter, Search, ChevronRight,
   Shield, Gauge, Globe, Link, FileText, Image,
-  Zap, Smartphone, Lock, ArrowUp, ArrowDown, Rocket
+  Zap, Smartphone, Lock, ArrowUp, ArrowDown, Rocket,
+  Monitor, Columns, Bug
 } from 'lucide-react';
 import IntegrationSetupChecklist from './IntegrationSetupChecklist';
+
+interface CoreWebVitals {
+  mobile?: {
+    lcp: number;
+    cls: number;
+    tbt: number;
+    fcp: number;
+    speed_index: number;
+    performance_score: number;
+    seo_score: number;
+    accessibility_score: number;
+  };
+  desktop?: {
+    lcp: number;
+    cls: number;
+    tbt: number;
+    fcp: number;
+    speed_index: number;
+    performance_score: number;
+    seo_score: number;
+    accessibility_score: number;
+  };
+}
 
 interface AuditData {
   audit: {
@@ -22,6 +46,7 @@ interface AuditData {
     content_score: number;
     performance_score: number;
     mobile_score: number;
+    desktop_score: number;
     security_score: number;
     total_issues: number;
     critical_issues: number;
@@ -32,6 +57,7 @@ interface AuditData {
     fixed_issues: number;
     audit_date: string;
     domain?: string;
+    core_web_vitals?: CoreWebVitals;
   } | null;
   issues: Issue[];
   recommendations: Recommendation[];
@@ -63,6 +89,8 @@ interface Recommendation {
   estimated_traffic_gain: number;
 }
 
+type DeviceView = 'mobile' | 'desktop' | 'compare';
+
 export default function AuditDashboard({ websiteId }: { websiteId: number }) {
   const [auditData, setAuditData] = useState<AuditData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +101,7 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
   const [siteType, setSiteType] = useState('custom');
   const [pollCount, setPollCount] = useState(0);
   const [initialAuditId, setInitialAuditId] = useState<number | null>(null);
+  const [deviceView, setDeviceView] = useState<DeviceView>('mobile');
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -162,6 +191,13 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
     return 'text-red-400';
   };
 
+  const getScoreBadgeColor = (score: number) => {
+    if (score >= 90) return 'bg-green-500/20 text-green-400 border-green-500/30';
+    if (score >= 70) return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+    if (score >= 50) return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+    return 'bg-red-500/20 text-red-400 border-red-500/30';
+  };
+
   const getSeverityColor = (severity: string) => {
     switch (severity?.toLowerCase()) {
       case 'critical': return 'bg-red-500/20 text-red-400 border-red-500/30';
@@ -189,6 +225,188 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
     if (selectedSeverity !== 'all' && issue.severity?.toLowerCase() !== selectedSeverity) return false;
     return true;
   }) || [];
+
+  // Device-filtered issues
+  const getDeviceFilteredIssues = () => {
+    if (deviceView === 'compare') return filteredIssues;
+    if (deviceView === 'mobile') {
+      return filteredIssues.filter(issue =>
+        issue.category?.toLowerCase() === 'mobile' ||
+        issue.issue_type?.toLowerCase().includes('mobile') ||
+        issue.title?.toLowerCase().includes('mobile')
+      );
+    }
+    // desktop
+    return filteredIssues.filter(issue =>
+      issue.category?.toLowerCase() !== 'mobile' &&
+      !issue.issue_type?.toLowerCase().includes('mobile') &&
+      !issue.title?.toLowerCase().includes('mobile')
+    );
+  };
+
+  const deviceIssues = getDeviceFilteredIssues();
+
+  const cwv = auditData?.audit?.core_web_vitals;
+  const mobileCwv = cwv?.mobile;
+  const desktopCwv = cwv?.desktop;
+
+  const renderMobileScoreCard = () => {
+    const score = auditData?.audit?.mobile_score ?? 0;
+    return (
+      <div className="bg-white/10 rounded-xl p-4 text-center border border-white/10">
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <Smartphone className="w-5 h-5 text-purple-400" />
+          <span className="text-xs text-gray-400">Mobile Score</span>
+        </div>
+        <p className={`text-3xl font-bold ${getScoreColor(score)}`}>{Math.round(score)}</p>
+        <span className={`inline-block mt-2 text-xs px-2 py-0.5 rounded-full border ${getScoreBadgeColor(score)}`}>
+          {score >= 90 ? 'Excellent' : score >= 70 ? 'Good' : score >= 50 ? 'Needs Work' : 'Poor'}
+        </span>
+      </div>
+    );
+  };
+
+  const renderDesktopScoreCard = () => {
+    const score = auditData?.audit?.desktop_score ?? 0;
+    return (
+      <div className="bg-white/10 rounded-xl p-4 text-center border border-white/10">
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <Monitor className="w-5 h-5 text-purple-400" />
+          <span className="text-xs text-gray-400">Desktop Score</span>
+        </div>
+        <p className={`text-3xl font-bold ${getScoreColor(score)}`}>{Math.round(score)}</p>
+        <span className={`inline-block mt-2 text-xs px-2 py-0.5 rounded-full border ${getScoreBadgeColor(score)}`}>
+          {score >= 90 ? 'Excellent' : score >= 70 ? 'Good' : score >= 50 ? 'Needs Work' : 'Poor'}
+        </span>
+      </div>
+    );
+  };
+
+  const renderCWVMetric = (label: string, value: number, unit: string, thresholdGood: number, thresholdPoor: number, mobileValue?: number, desktopValue?: number) => {
+    let color = 'text-green-400';
+    if (value >= thresholdPoor) color = 'text-red-400';
+    else if (value >= thresholdGood) color = 'text-yellow-400';
+
+    if (deviceView === 'compare' && mobileValue !== undefined && desktopValue !== undefined) {
+      let mColor = 'text-green-400';
+      if (mobileValue >= thresholdPoor) mColor = 'text-red-400';
+      else if (mobileValue >= thresholdGood) mColor = 'text-yellow-400';
+      let dColor = 'text-green-400';
+      if (desktopValue >= thresholdPoor) dColor = 'text-red-400';
+      else if (desktopValue >= thresholdGood) dColor = 'text-yellow-400';
+
+      return (
+        <div className="bg-white/5 rounded-lg p-3">
+          <p className="text-xs text-gray-400 mb-1">{label}</p>
+          <div className="flex items-center justify-between">
+            <div className="text-center">
+              <p className={`text-lg font-bold ${mColor}`}>{mobileValue}{unit}</p>
+              <p className="text-[10px] text-gray-500">Mobile</p>
+            </div>
+            <div className="text-center">
+              <p className={`text-lg font-bold ${dColor}`}>{desktopValue}{unit}</p>
+              <p className="text-[10px] text-gray-500">Desktop</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-white/5 rounded-lg p-3">
+        <p className="text-xs text-gray-400 mb-1">{label}</p>
+        <p className={`text-xl font-bold ${color}`}>{value}{unit}</p>
+      </div>
+    );
+  };
+
+  const renderDeviceViewToggle = () => (
+    <div className="flex items-center bg-white/10 rounded-lg p-1 border border-white/10">
+      <button
+        onClick={() => setDeviceView('mobile')}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+          deviceView === 'mobile'
+            ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/25'
+            : 'text-gray-300 hover:text-white'
+        }`}
+      >
+        <Smartphone className="w-4 h-4" />
+        Mobile
+      </button>
+      <button
+        onClick={() => setDeviceView('desktop')}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+          deviceView === 'desktop'
+            ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/25'
+            : 'text-gray-300 hover:text-white'
+        }`}
+      >
+        <Monitor className="w-4 h-4" />
+        Desktop
+      </button>
+      <button
+        onClick={() => setDeviceView('compare')}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+          deviceView === 'compare'
+            ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/25'
+            : 'text-gray-300 hover:text-white'
+        }`}
+      >
+        <Columns className="w-4 h-4" />
+        Compare
+      </button>
+    </div>
+  );
+
+  const renderMobileIssuesHighlight = () => {
+    const mobileIssues = auditData?.issues?.filter(i => i.category?.toLowerCase() === 'mobile') || [];
+    if (mobileIssues.length === 0) return null;
+
+    const criticalMobile = mobileIssues.filter(i => i.severity?.toLowerCase() === 'critical' || i.severity?.toLowerCase() === 'error');
+    const warningMobile = mobileIssues.filter(i => i.severity?.toLowerCase() === 'warning');
+
+    return (
+      <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-purple-500/20">
+        <div className="flex items-center gap-2 mb-3">
+          <Bug className="w-5 h-5 text-purple-400" />
+          <h3 className="text-white font-medium">Mobile-Specific Issues</h3>
+          <span className="text-xs text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded-full">{mobileIssues.length} found</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {criticalMobile.length > 0 && (
+            <div className="flex items-center gap-2 text-red-400 text-sm">
+              <XCircle className="w-4 h-4 shrink-0" />
+              <span>{criticalMobile.length} critical mobile issue{criticalMobile.length !== 1 ? 's' : ''}</span>
+            </div>
+          )}
+          {warningMobile.length > 0 && (
+            <div className="flex items-center gap-2 text-yellow-400 text-sm">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{warningMobile.length} mobile warning{warningMobile.length !== 1 ? 's' : ''}</span>
+            </div>
+          )}
+          {mobileIssues.some(i => i.issue_type?.toLowerCase().includes('viewport')) && (
+            <div className="flex items-center gap-2 text-orange-400 text-sm">
+              <Smartphone className="w-4 h-4 shrink-0" />
+              <span>Viewport issues detected</span>
+            </div>
+          )}
+          {mobileIssues.some(i => i.issue_type?.toLowerCase().includes('tap')) && (
+            <div className="flex items-center gap-2 text-orange-400 text-sm">
+              <Smartphone className="w-4 h-4 shrink-0" />
+              <span>Touch target issues</span>
+            </div>
+          )}
+          {mobileIssues.some(i => i.issue_type?.toLowerCase().includes('font')) && (
+            <div className="flex items-center gap-2 text-orange-400 text-sm">
+              <FileText className="w-4 h-4 shrink-0" />
+              <span>Font size issues on mobile</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -250,7 +468,7 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
 
       {/* Header with Health Score */}
       <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
             <h2 className="text-2xl font-bold text-white mb-1">
               Site Health Audit
@@ -258,10 +476,13 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
             </h2>
             <p className="text-purple-300 text-sm">Last audit: {new Date(audit.audit_date).toLocaleString()}</p>
           </div>
-          <button onClick={runAudit} disabled={isRunningAudit}
-            className="bg-purple-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-600 transition-all flex items-center gap-2 disabled:opacity-50">
-            {isRunningAudit ? (<><RefreshCw className="w-4 h-4 animate-spin" />Running...</>) : (<><RefreshCw className="w-4 h-4" />Run New Audit</>)}
-          </button>
+          <div className="flex items-center gap-3 flex-wrap">
+            {renderDeviceViewToggle()}
+            <button onClick={runAudit} disabled={isRunningAudit}
+              className="bg-purple-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-600 transition-all flex items-center gap-2 disabled:opacity-50">
+              {isRunningAudit ? (<><RefreshCw className="w-4 h-4 animate-spin" />Running...</>) : (<><RefreshCw className="w-4 h-4" />Run New Audit</>)}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -308,6 +529,22 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
           </div>
         </div>
 
+        {/* Mobile/Desktop Score Cards */}
+        {deviceView === 'compare' ? (
+          <div className="grid grid-cols-2 gap-4 mt-6">
+            {renderMobileScoreCard()}
+            {renderDesktopScoreCard()}
+          </div>
+        ) : deviceView === 'mobile' ? (
+          <div className="grid grid-cols-1 gap-4 mt-6">
+            {renderMobileScoreCard()}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 mt-6">
+            {renderDesktopScoreCard()}
+          </div>
+        )}
+
         <div className="grid grid-cols-5 gap-4 mt-6">
           {[
             { label: 'Technical', score: audit.technical_score, Icon: Globe },
@@ -325,6 +562,49 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
         </div>
       </div>
 
+      {/* Core Web Vitals Section */}
+      {(mobileCwv || desktopCwv) && (
+        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+          <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+            <Gauge className="w-5 h-5 text-purple-400" />
+            Core Web Vitals
+            {deviceView === 'mobile' && <span className="text-xs text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded-full">Mobile</span>}
+            {deviceView === 'desktop' && <span className="text-xs text-blue-300 bg-blue-500/20 px-2 py-0.5 rounded-full">Desktop</span>}
+            {deviceView === 'compare' && <span className="text-xs text-gray-300 bg-white/10 px-2 py-0.5 rounded-full">Side by Side</span>}
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {deviceView === 'compare' && mobileCwv && desktopCwv ? (
+              <>
+                {renderCWVMetric('LCP', 0, 's', 2.5, 4.0, mobileCwv.lcp, desktopCwv.lcp)}
+                {renderCWVMetric('CLS', 0, '', 0.1, 0.25, mobileCwv.cls, desktopCwv.cls)}
+                {renderCWVMetric('TBT', 0, 'ms', 200, 600, mobileCwv.tbt, desktopCwv.tbt)}
+                {renderCWVMetric('FCP', 0, 's', 1.8, 3.0, mobileCwv.fcp, desktopCwv.fcp)}
+                {renderCWVMetric('Speed Index', 0, 's', 3.4, 5.8, mobileCwv.speed_index, desktopCwv.speed_index)}
+              </>
+            ) : deviceView === 'mobile' && mobileCwv ? (
+              <>
+                {renderCWVMetric('LCP', mobileCwv.lcp, 's', 2.5, 4.0)}
+                {renderCWVMetric('CLS', mobileCwv.cls, '', 0.1, 0.25)}
+                {renderCWVMetric('TBT', mobileCwv.tbt, 'ms', 200, 600)}
+                {renderCWVMetric('FCP', mobileCwv.fcp, 's', 1.8, 3.0)}
+                {renderCWVMetric('Speed Index', mobileCwv.speed_index, 's', 3.4, 5.8)}
+              </>
+            ) : desktopCwv ? (
+              <>
+                {renderCWVMetric('LCP', desktopCwv.lcp, 's', 2.5, 4.0)}
+                {renderCWVMetric('CLS', desktopCwv.cls, '', 0.1, 0.25)}
+                {renderCWVMetric('TBT', desktopCwv.tbt, 'ms', 200, 600)}
+                {renderCWVMetric('FCP', desktopCwv.fcp, 's', 1.8, 3.0)}
+                {renderCWVMetric('Speed Index', desktopCwv.speed_index, 's', 3.4, 5.8)}
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Issues Highlight */}
+      {deviceView !== 'desktop' && renderMobileIssuesHighlight()}
+
       {/* Filters */}
       {auditData.issues.length > 0 && (
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20">
@@ -336,7 +616,11 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
             <select value={selectedSeverity} onChange={(e) => setSelectedSeverity(e.target.value)} className="bg-white/10 text-white border border-white/20 rounded-lg px-3 py-1.5 text-sm">
               <option value="all">All Severities</option><option value="critical">Critical</option><option value="error">Errors</option><option value="warning">Warnings</option><option value="notice">Notices</option>
             </select>
-            <div className="ml-auto text-white text-sm">Showing {filteredIssues.length} of {auditData.issues.length} issues</div>
+            <div className="ml-auto text-white text-sm">
+              Showing {deviceIssues.length} of {auditData.issues.length} issues
+              {deviceView === 'mobile' && ' (mobile only)'}
+              {deviceView === 'desktop' && ' (desktop only)'}
+            </div>
           </div>
         </div>
       )}
@@ -344,7 +628,7 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
       {/* Issues List */}
       <div className="space-y-3">
         <AnimatePresence>
-          {filteredIssues.map((issue) => (
+          {deviceIssues.map((issue) => (
             <motion.div key={issue.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               className="bg-white/10 backdrop-blur-md rounded-xl border border-white/20 overflow-hidden">
               <div className="p-4 cursor-pointer hover:bg-white/5 transition-all" onClick={() => setExpandedIssue(expandedIssue === issue.id ? null : issue.id)}>
@@ -356,6 +640,11 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
                         <h4 className="text-white font-medium">{issue.issue_type || issue.title}</h4>
                         <span className={`text-xs px-2 py-0.5 rounded-full border ${getSeverityColor(issue.severity)}`}>{issue.severity}</span>
                         <span className="text-xs text-gray-500 bg-white/5 px-2 py-0.5 rounded-full">{issue.category}</span>
+                        {issue.category?.toLowerCase() === 'mobile' && (
+                          <span className="text-xs text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Smartphone className="w-3 h-3" /> Mobile
+                          </span>
+                        )}
                       </div>
                       <p className="text-purple-300 text-sm mt-1">{issue.title}</p>
                       <div className="flex items-center gap-4 mt-2">
@@ -417,10 +706,12 @@ export default function AuditDashboard({ websiteId }: { websiteId: number }) {
           ))}
         </AnimatePresence>
 
-        {filteredIssues.length === 0 && auditData.issues.length > 0 && (
+        {deviceIssues.length === 0 && auditData.issues.length > 0 && (
           <div className="text-center py-12 bg-white/5 rounded-xl">
             <Filter className="w-12 h-12 text-gray-500 mx-auto mb-3" />
             <p className="text-white font-medium">No issues match your filters</p>
+            {deviceView === 'mobile' && <p className="text-gray-400 text-sm mt-1">No mobile-specific issues found. Great job!</p>}
+            {deviceView === 'desktop' && <p className="text-gray-400 text-sm mt-1">No desktop-specific issues found. Great job!</p>}
           </div>
         )}
         {auditData.issues.length === 0 && (

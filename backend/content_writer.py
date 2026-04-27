@@ -274,30 +274,53 @@ Return JSON:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AUTO-PUBLISH: Shopify / WordPress
+# PUBLISHING QUEUE: Schedule / Publish / Cancel
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def publish_content(content_id: int) -> Dict[str, Any]:
-    """Publish a ContentItem to the connected platform (Shopify or WordPress)."""
+async def schedule_content(website_id: int, content_id: int, publish_date: datetime) -> Dict[str, Any]:
+    """Schedule content for publishing at a specific date/time."""
     db = SessionLocal()
     try:
-        content = db.query(ContentItem).filter(ContentItem.id == content_id).first()
+        content = db.query(ContentItem).filter(
+            ContentItem.id == content_id,
+            ContentItem.website_id == website_id
+        ).first()
+        if not content:
+            return {"error": "Content not found"}
+
+        content.scheduled_publish_date = publish_date
+        content.status = "Scheduled"
+        db.commit()
+        print(f"[Content] Scheduled content {content_id} for {publish_date.isoformat()}")
+        return {
+            "success": True,
+            "content_id": content_id,
+            "scheduled_publish_date": publish_date.isoformat(),
+            "status": "Scheduled",
+            "message": f"Content scheduled for {publish_date.strftime('%Y-%m-%d %H:%M')}"
+        }
+    except Exception as e:
+        db.rollback()
+        print(f"[Content] Schedule failed for {content_id}: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+async def publish_content(website_id: int, content_id: int) -> Dict[str, Any]:
+    """Publish a ContentItem to the connected platform (Shopify, WordPress, or Custom)."""
+    db = SessionLocal()
+    try:
+        content = db.query(ContentItem).filter(
+            ContentItem.id == content_id,
+            ContentItem.website_id == website_id
+        ).first()
         if not content:
             return {"error": "Content not found"}
 
         website = db.query(Website).filter(Website.id == content.website_id).first()
         if not website:
             return {"error": "Website not found"}
-
-        from database import Integration
-        integration = db.query(Integration).filter(
-            Integration.website_id == website.id,
-            Integration.integration_type.in_(["shopify", "wordpress"]),
-            Integration.status == "active"
-        ).first()
-
-        if not integration:
-            return {"error": f"No active {'Shopify' if website.site_type == 'shopify' else 'WordPress'} integration found"}
 
         # Parse content
         content_data = {}
@@ -310,12 +333,123 @@ async def publish_content(content_id: int) -> Dict[str, Any]:
         title = content_data.get("title", content.title)
         body = content_data.get("content_html", content.ai_generated_content or "")
 
-        if integration.integration_type == "shopify":
-            return await _publish_to_shopify(integration, title, body, content)
-        elif integration.integration_type == "wordpress":
-            return await _publish_to_wordpress(integration, title, body, content)
+        # Custom sites: no auto-publish
+        if website.site_type == "custom":
+            print(f"[Content] Custom site — manual publish required for content {content_id}")
+            return {
+                "success": False,
+                "platform": "custom",
+                "message": "Manual publish required. Copy the HTML and paste it into your CMS.",
+                "title": title,
+                "content_html": body,
+            }
 
-        return {"error": "Unsupported platform"}
+        from database import Integration
+        integration = db.query(Integration).filter(
+            Integration.website_id == website.id,
+            Integration.integration_type.in_(["shopify", "wordpress"]),
+            Integration.status == "active"
+        ).first()
+
+        if not integration:
+            return {"error": f"No active {'Shopify' if website.site_type == 'shopify' else 'WordPress'} integration found"}
+
+        if integration.integration_type == "shopify":
+            result = await _publish_to_shopify(integration, title, body, content)
+        elif integration.integration_type == "wordpress":
+            result = await _publish_to_wordpress(integration, title, body, content)
+        else:
+            return {"error": "Unsupported platform"}
+
+        # Update status on success
+        if result.get("success"):
+            content.status = "Published"
+            content.published_at = datetime.utcnow()
+            db.commit()
+            print(f"[Content] Published content {content_id} to {integration.integration_type}")
+        else:
+            content.status = "Failed"
+            db.commit()
+            print(f"[Content] Publish failed for content {content_id}: {result.get('error', 'Unknown error')}")
+
+        return result
+    except Exception as e:
+        db.rollback()
+        print(f"[Content] Publish exception for {content_id}: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+async def get_publishing_queue(website_id: int) -> Dict[str, Any]:
+    """Return all content items for a website, grouped by status."""
+    db = SessionLocal()
+    try:
+        items = db.query(ContentItem).filter(
+            ContentItem.website_id == website_id
+        ).order_by(ContentItem.scheduled_publish_date.desc().nullslast(), ContentItem.id.desc()).all()
+
+        queue = []
+        for item in items:
+            queue.append({
+                "id": item.id,
+                "title": item.title,
+                "content_type": item.content_type,
+                "status": item.status,
+                "scheduled_publish_date": item.scheduled_publish_date.isoformat() if item.scheduled_publish_date else None,
+                "published_at": item.published_at.isoformat() if item.published_at else None,
+                "publish_date": item.publish_date.isoformat() if item.publish_date else None,
+                "keywords": item.keywords_target or [],
+                "has_content": bool(item.ai_generated_content),
+            })
+
+        print(f"[Content] Publishing queue for website {website_id}: {len(queue)} items")
+        return {
+            "website_id": website_id,
+            "queue": queue,
+            "counts": {
+                "total": len(queue),
+                "draft": len([i for i in queue if i["status"] == "Draft"]),
+                "scheduled": len([i for i in queue if i["status"] == "Scheduled"]),
+                "published": len([i for i in queue if i["status"] == "Published"]),
+                "failed": len([i for i in queue if i["status"] == "Failed"]),
+            }
+        }
+    except Exception as e:
+        print(f"[Content] Queue fetch failed for website {website_id}: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+async def cancel_scheduled(website_id: int, content_id: int) -> Dict[str, Any]:
+    """Cancel a scheduled publish and revert to Draft."""
+    db = SessionLocal()
+    try:
+        content = db.query(ContentItem).filter(
+            ContentItem.id == content_id,
+            ContentItem.website_id == website_id
+        ).first()
+        if not content:
+            return {"error": "Content not found"}
+
+        if content.status not in ("Scheduled",):
+            return {"error": f"Cannot cancel — content is '{content.status}', not Scheduled"}
+
+        content.status = "Draft"
+        content.scheduled_publish_date = None
+        db.commit()
+        print(f"[Content] Cancelled scheduled publish for content {content_id}")
+        return {
+            "success": True,
+            "content_id": content_id,
+            "status": "Draft",
+            "message": "Scheduled publish cancelled. Content reverted to Draft."
+        }
+    except Exception as e:
+        db.rollback()
+        print(f"[Content] Cancel failed for {content_id}: {e}")
+        return {"error": str(e)}
     finally:
         db.close()
 
@@ -323,13 +457,16 @@ async def publish_content(content_id: int) -> Dict[str, Any]:
 async def _publish_to_shopify(integration, title: str, body: str, content: ContentItem) -> Dict[str, Any]:
     """Publish as a Shopify blog article."""
     config = integration.config or {}
-    store_url = config.get("shopify_store_url") or integration.account_name
+    store_url = config.get("shopify_store_url") or config.get("store_url") or config.get("shop_domain") or integration.account_name
     if not store_url:
         return {"error": "Shopify store URL not configured"}
 
     token = integration.access_token
     if not token:
         return {"error": "Shopify access token not available"}
+
+    # Normalize store URL
+    store_url = store_url.replace("https://", "").replace("http://", "").rstrip("/")
 
     # Shopify GraphQL mutation to create a blog article
     # First, get or create a blog
@@ -347,7 +484,7 @@ async def _publish_to_shopify(integration, title: str, body: str, content: Conte
                     if blogs:
                         blog_id = blogs[0]["id"]
         except Exception as e:
-            print(f"[Publish] Shopify blog fetch error: {e}")
+            print(f"[Content] Shopify blog fetch error: {e}")
 
     if not blog_id:
         return {"error": "No Shopify blog found. Create a blog first."}
@@ -375,13 +512,6 @@ async def _publish_to_shopify(integration, title: str, body: str, content: Conte
             )
             if resp.status_code in (200, 201):
                 data = resp.json().get("article", {})
-                # Update content status
-                db = SessionLocal()
-                try:
-                    content.status = "Published"
-                    db.commit()
-                finally:
-                    db.close()
                 return {
                     "success": True,
                     "platform": "shopify",
@@ -394,7 +524,7 @@ async def _publish_to_shopify(integration, title: str, body: str, content: Conte
 
 
 async def _publish_to_wordpress(integration, title: str, body: str, content: ContentItem) -> Dict[str, Any]:
-    """Publish as a WordPress post."""
+    """Publish as a WordPress post via REST API or XML-RPC fallback."""
     config = integration.config or {}
     wp_url = config.get("wp_url")
     if not wp_url:
@@ -414,6 +544,7 @@ async def _publish_to_wordpress(integration, title: str, body: str, content: Con
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
+            # Try REST API first
             resp = await client.post(
                 f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts",
                 json=post_data,
@@ -421,18 +552,71 @@ async def _publish_to_wordpress(integration, title: str, body: str, content: Con
             )
             if resp.status_code in (200, 201):
                 data = resp.json()
-                db = SessionLocal()
-                try:
-                    content.status = "Published"
-                    db.commit()
-                finally:
-                    db.close()
                 return {
                     "success": True,
                     "platform": "wordpress",
                     "published_url": data.get("link"),
                     "post_id": data.get("id"),
                 }
+
+            # If REST API fails with 401/403, try XML-RPC
+            if resp.status_code in (401, 403):
+                print(f"[Content] WordPress REST API blocked ({resp.status_code}), trying XML-RPC fallback")
+                return await _publish_to_wordpress_xmlrpc(wp_url, username, password, title, body, content)
+
             return {"error": f"WordPress API error: {resp.status_code}", "details": resp.text[:500]}
     except Exception as e:
-        return {"error": f"WordPress publish failed: {str(e)}"}
+        print(f"[Content] WordPress REST publish failed, trying XML-RPC: {e}")
+        return await _publish_to_wordpress_xmlrpc(wp_url, username, password, title, body, content)
+
+
+async def _publish_to_wordpress_xmlrpc(wp_url: str, username: str, password: str, title: str, body: str, content: ContentItem) -> Dict[str, Any]:
+    """Publish via WordPress XML-RPC as fallback."""
+    try:
+        from xml.sax.saxutils import escape as _xml_escape
+        u_esc = _xml_escape(username)
+        p_esc = _xml_escape(password)
+        t_esc = _xml_escape(title)
+        b_esc = _xml_escape(body)
+
+        xml_payload = f"""<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.newPost</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>{u_esc}</string></value></param>
+    <param><value><string>{p_esc}</string></value></param>
+    <param><value><struct>
+      <member><name>post_title</name><value><string>{t_esc}</string></value></member>
+      <member><name>post_content</name><value><string>{b_esc}</string></value></member>
+      <member><name>post_status</name><value><string>publish</string></value></member>
+      <member><name>post_type</name><value><string>post</string></value></member>
+    </struct></value></param>
+  </params>
+</methodCall>"""
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{wp_url.rstrip('/')}/xmlrpc.php",
+                content=xml_payload.encode(),
+                headers={"Content-Type": "text/xml; charset=utf-8"}
+            )
+            if resp.status_code == 200 and "<int>" in resp.text:
+                import re
+                m = re.search(r"<int>(\d+)</int>", resp.text)
+                post_id = m.group(1) if m else None
+                return {
+                    "success": True,
+                    "platform": "wordpress",
+                    "method": "xmlrpc",
+                    "published_url": f"{wp_url.rstrip('/')}/?p={post_id}" if post_id else None,
+                    "post_id": post_id,
+                }
+            elif "faultString" in resp.text:
+                import re
+                m = re.search(r"faultString.*?<string>(.*?)</string>", resp.text, re.DOTALL)
+                fault = m.group(1).strip() if m else "Unknown XML-RPC fault"
+                return {"error": f"WordPress XML-RPC error: {fault}"}
+            return {"error": f"WordPress XML-RPC error: {resp.status_code}", "details": resp.text[:500]}
+    except Exception as e:
+        return {"error": f"WordPress XML-RPC publish failed: {str(e)}"}
