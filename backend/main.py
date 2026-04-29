@@ -2237,6 +2237,212 @@ async def get_index_trends_endpoint(
     return get_index_trends(website_id, days=days)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYNC ALL — Run every audit, sync, and scan for a website
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/sync-all/{website_id}")
+async def sync_all(website_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Run all audits, syncs, and scans for a website in the background.
+    Returns immediately with a job ID. Poll /api/sync-all/{website_id}/status for progress."""
+    website = db.query(Website).filter(Website.id == website_id).first()
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+
+    job_id = f"syncall_{website_id}_{int(time.time())}"
+    _sync_all_jobs[job_id] = {
+        "status": "running",
+        "started_at": datetime.utcnow().isoformat(),
+        "steps": [],
+        "current_step": None,
+        "error": None,
+    }
+
+    background_tasks.add_task(_run_sync_all, website_id, job_id)
+    return {"job_id": job_id, "status": "started", "message": "Full sync started. This will take 5-15 minutes."}
+
+
+# In-memory job tracker (per-deployment)
+_sync_all_jobs: Dict[str, Dict] = {}
+
+
+async def _run_sync_all(website_id: int, job_id: str):
+    """Background worker that runs every sync/audit sequentially."""
+    from geo_engine import run_geo_audit
+    from geo_fix_engine import scan_geo_fixes
+    from fix_engine import AIFixGenerator
+    from linking_engine import analyze_internal_links
+    from content_decay import analyze_content_decay
+    from cwv_monitor import check_cwv
+    from image_optimizer import ImageOptimizer
+    from local_seo import check_gbp_presence
+    from ab_testing import get_ab_tests
+    from schema_generator import generate_schema
+
+    def _step(name: str):
+        _sync_all_jobs[job_id]["current_step"] = name
+        _sync_all_jobs[job_id]["steps"].append({"step": name, "at": datetime.utcnow().isoformat(), "status": "running"})
+        print(f"[SyncAll] {job_id}: {name}")
+
+    def _step_done(name: str, result: str = "ok"):
+        for s in _sync_all_jobs[job_id]["steps"]:
+            if s["step"] == name and s.get("status") == "running":
+                s["status"] = result
+        print(f"[SyncAll] {job_id}: {name} → {result}")
+
+    try:
+        db = SessionLocal()
+        website = db.query(Website).filter(Website.id == website_id).first()
+        if not website:
+            _sync_all_jobs[job_id]["status"] = "failed"
+            _sync_all_jobs[job_id]["error"] = "Website not found"
+            return
+
+        domain = website.domain
+        base_url = f"https://{domain}"
+
+        # 1. Site Audit
+        _step("Site Audit")
+        try:
+            from audit_engine import SEOAuditEngine
+            audit_engine = SEOAuditEngine(website_id)
+            await audit_engine.run_comprehensive_audit()
+            _step_done("Site Audit", "done")
+        except Exception as e:
+            _step_done("Site Audit", f"error: {e}")
+
+        # 2. Keyword Sync (GSC)
+        _step("Keyword Sync")
+        try:
+            from search_console import sync_gsc_keywords
+            await sync_gsc_keywords(website_id)
+            _step_done("Keyword Sync", "done")
+        except Exception as e:
+            _step_done("Keyword Sync", f"error: {e}")
+
+        # 3. GEO Audit
+        _step("GEO Audit")
+        try:
+            geo_result = await run_geo_audit(website_id)
+            # Persist to StrategistResult
+            sr = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+            if not sr:
+                sr = StrategistResult(website_id=website_id)
+                db.add(sr)
+            sr.geo_audit = geo_result
+            sr.geo_audit_at = datetime.utcnow()
+            db.commit()
+            _step_done("GEO Audit", "done")
+        except Exception as e:
+            _step_done("GEO Audit", f"error: {e}")
+
+        # 4. GEO Fix Scan
+        _step("GEO Fix Scan")
+        try:
+            await scan_geo_fixes(website_id)
+            _step_done("GEO Fix Scan", "done")
+        except Exception as e:
+            _step_done("GEO Fix Scan", f"error: {e}")
+
+        # 5. Fix Scan (AI fixes)
+        _step("Fix Scan")
+        try:
+            fix_gen = AIFixGenerator(website_id)
+            await fix_gen.scan_and_generate_fixes()
+            _step_done("Fix Scan", "done")
+        except Exception as e:
+            _step_done("Fix Scan", f"error: {e}")
+
+        # 6. Internal Linking Analysis
+        _step("Linking Analysis")
+        try:
+            await analyze_internal_links(website_id)
+            _step_done("Linking Analysis", "done")
+        except Exception as e:
+            _step_done("Linking Analysis", f"error: {e}")
+
+        # 7. Content Decay Analysis
+        _step("Content Decay")
+        try:
+            await analyze_content_decay(website_id)
+            _step_done("Content Decay", "done")
+        except Exception as e:
+            _step_done("Content Decay", f"error: {e}")
+
+        # 8. Core Web Vitals
+        _step("Core Web Vitals")
+        try:
+            await check_cwv(website_id, base_url, "mobile")
+            await check_cwv(website_id, base_url, "desktop")
+            _step_done("Core Web Vitals", "done")
+        except Exception as e:
+            _step_done("Core Web Vitals", f"error: {e}")
+
+        # 9. Image Audit
+        _step("Image Audit")
+        try:
+            optimizer = ImageOptimizer(website_id)
+            await optimizer.analyze_images()
+            _step_done("Image Audit", "done")
+        except Exception as e:
+            _step_done("Image Audit", f"error: {e}")
+
+        # 10. Local SEO Check
+        _step("Local SEO")
+        try:
+            await check_gbp_presence(website_id)
+            _step_done("Local SEO", "done")
+        except Exception as e:
+            _step_done("Local SEO", f"error: {e}")
+
+        # 11. Sitemap Generation
+        _step("Sitemap Generation")
+        try:
+            from sitemap_generator import generate_sitemap
+            await generate_sitemap(website_id)
+            _step_done("Sitemap Generation", "done")
+        except Exception as e:
+            _step_done("Sitemap Generation", f"error: {e}")
+
+        # 12. Broken Link Scan
+        _step("Broken Link Scan")
+        try:
+            from link_checker import scan_broken_links
+            await scan_broken_links(website_id)
+            _step_done("Broken Link Scan", "done")
+        except Exception as e:
+            _step_done("Broken Link Scan", f"error: {e}")
+
+        # 13. Index Status Sync
+        _step("Index Status Sync")
+        try:
+            from index_tracker import sync_index_status
+            await sync_index_status(website_id)
+            _step_done("Index Status Sync", "done")
+        except Exception as e:
+            _step_done("Index Status Sync", f"error: {e}")
+
+        _sync_all_jobs[job_id]["status"] = "completed"
+        _sync_all_jobs[job_id]["completed_at"] = datetime.utcnow().isoformat()
+        print(f"[SyncAll] {job_id}: ALL DONE")
+
+    except Exception as e:
+        _sync_all_jobs[job_id]["status"] = "failed"
+        _sync_all_jobs[job_id]["error"] = str(e)
+        print(f"[SyncAll] {job_id}: FAILED — {e}")
+    finally:
+        db.close()
+
+
+@app.get("/api/sync-all/{website_id}/status")
+async def sync_all_status(website_id: int, job_id: str):
+    """Get the status of a running sync-all job."""
+    job = _sync_all_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job_id": job_id, **job}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))

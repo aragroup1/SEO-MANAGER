@@ -7,7 +7,8 @@ import {
   TrendingUp, TrendingDown, Minus, Search, MousePointerClick,
   Eye, AlertTriangle, CheckCircle, Loader2, Zap, Bot,
   Activity, Target, Star, Sparkles, Globe, BarChart3,
-  ArrowRight, Shield, ChevronRight, Plus, Settings
+  ArrowRight, Shield, ChevronRight, Plus, Settings,
+  RefreshCw
 } from 'lucide-react';
 
 interface WebsiteSummary {
@@ -54,6 +55,8 @@ export default function OverviewDashboard({
 }) {
   const [summaries, setSummaries] = useState<WebsiteSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [syncJob, setSyncJob] = useState<{job_id: string; status: string} | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -64,6 +67,25 @@ export default function OverviewDashboard({
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [API_URL]);
+
+  // Poll sync-all job status
+  useEffect(() => {
+    if (!syncJob || syncJob.status !== 'running') return;
+    const interval = setInterval(async () => {
+      try {
+        const r = await fetch(`${API_URL}/api/sync-all/${selectedWebsite}/status?job_id=${syncJob.job_id}`);
+        if (r.ok) {
+          const d = await r.json();
+          setSyncJob({ job_id: d.job_id, status: d.status });
+          if (d.status === 'completed' || d.status === 'failed') {
+            setSyncingAll(false);
+            clearInterval(interval);
+          }
+        }
+      } catch (e) { console.error(e); }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [syncJob, selectedWebsite, API_URL]);
 
   const scoreColor = (s: number | null) => !s ? 'text-[#52525b]' : s >= 70 ? 'text-[#4ade80]' : s >= 50 ? 'text-[#fbbf24]' : 'text-[#f87171]';
   const scoreBg = (s: number | null) => !s ? 'from-[#1a1a1e]' : s >= 70 ? 'from-[#4ade80]/20' : s >= 50 ? 'from-[#fbbf24]/20' : 'from-[#f87171]/20';
@@ -94,6 +116,31 @@ export default function OverviewDashboard({
           <p className="text-[#52525b] text-sm mt-0.5">All your websites at a glance</p>
         </div>
         <div className="flex items-center gap-2">
+          {selectedWebsite && (
+            <button
+              onClick={async () => {
+                if (syncingAll) return;
+                setSyncingAll(true);
+                try {
+                  const r = await fetch(`${API_URL}/api/sync-all/${selectedWebsite}`, { method: 'POST' });
+                  if (r.ok) {
+                    const d = await r.json();
+                    setSyncJob({ job_id: d.job_id, status: 'running' });
+                  }
+                } catch (e) { console.error(e); }
+              }}
+              disabled={syncingAll}
+              className="btn-premium disabled:opacity-50"
+              title="Run all audits, syncs, and scans"
+            >
+              {syncingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              {syncingAll ? 'Syncing...' : 'Sync All'}
+            </button>
+          )}
           {onAddWebsite && (
             <button onClick={onAddWebsite} className="btn-premium">
               <Plus className="w-4 h-4" /> Add Website
@@ -106,6 +153,36 @@ export default function OverviewDashboard({
           )}
         </div>
       </div>
+
+      {/* Sync Job Status */}
+      {syncJob && (
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+          className="card-liquid p-4 border-l-4 border-l-[#7c6cf9]">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#7c6cf9]/10 flex items-center justify-center">
+              <RefreshCw className={`w-4 h-4 text-[#7c6cf9] ${syncJob.status === 'running' ? 'animate-spin' : ''}`} />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-[#f5f5f7]">
+                {syncJob.status === 'completed' ? 'Sync Complete' : syncJob.status === 'failed' ? 'Sync Failed' : 'Full Sync Running'}
+              </p>
+              <p className="text-xs text-[#52525b]">
+                {syncJob.status === 'running'
+                  ? 'Audit → Keywords → GEO → Fixes → Links → Decay → Speed → Images → Local → Sitemap → Links → Index'
+                  : syncJob.status === 'completed'
+                  ? 'All sections synced successfully'
+                  : 'Check logs for errors'}
+              </p>
+            </div>
+            {syncJob.status === 'running' && (
+              <div className="w-2 h-2 bg-[#7c6cf9] rounded-full animate-pulse" />
+            )}
+            {syncJob.status === 'completed' && (
+              <CheckCircle className="w-5 h-5 text-[#4ade80]" />
+            )}
+          </div>
+        </motion.div>
+      )}
 
       {/* Aggregate Summary Bar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

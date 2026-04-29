@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 from database import (
     SessionLocal, Website, AuditReport, KeywordSnapshot,
-    TrackedKeyword, ProposedFix, StrategistResult
+    TrackedKeyword, ProposedFix, StrategistResult, LocalSEOPresence
 )
 
 load_dotenv()
@@ -223,6 +223,42 @@ async def generate_report_data(website_id: int, month: str = None) -> Dict[str, 
             print(f"[Report] GA4 data error (non-fatal): {ga4_err}")
             report["ga4_traffic"] = None
 
+        # ─── GEO Audit ───
+        sr_geo = db.query(StrategistResult).filter(StrategistResult.website_id == website_id).first()
+        if sr_geo and sr_geo.geo_audit:
+            G = sr_geo.geo_audit or {}
+            report["geo"] = {
+                "analyzed_at": sr_geo.geo_audit_at.isoformat() if sr_geo.geo_audit_at else None,
+                "overall_score": G.get("overall_score", 0),
+                "content_structure": G.get("content_structure", 0),
+                "schema_data": G.get("schema_data", 0),
+                "authority_trust": G.get("authority_trust", 0),
+                "freshness": G.get("freshness", 0),
+                "citability": G.get("citability", 0),
+                "pages_analyzed": G.get("pages_analyzed", 0),
+                "top_recommendations": (G.get("recommendations") or [])[:5],
+            }
+        else:
+            report["geo"] = None
+
+        # ─── Local SEO ───
+        local = db.query(LocalSEOPresence).filter(LocalSEOPresence.website_id == website_id).first()
+        if local:
+            report["local_seo"] = {
+                "business_name": local.business_name,
+                "address": local.address,
+                "city": local.city,
+                "postcode": local.postcode,
+                "phone": local.phone,
+                "category": local.category,
+                "gbp_status": local.gbp_status,
+                "review_count": local.review_count,
+                "avg_rating": local.avg_rating,
+                "last_checked": local.last_checked.isoformat() if local.last_checked else None,
+            }
+        else:
+            report["local_seo"] = None
+
         # ─── History Charts ───
         report["audit_history"] = [{"date": h.audit_date.strftime("%Y-%m-%d"), "score": h.health_score, "issues": h.total_issues} for h in db.query(AuditReport).filter(AuditReport.website_id == website_id).order_by(AuditReport.audit_date.asc()).limit(20).all()]
 
@@ -329,6 +365,9 @@ async def _generate_ai_summary(report: Dict) -> str:
     if not audit and not kw:
         return "Run an audit and sync keywords to generate a report summary."
 
+    geo = report.get("geo")
+    local = report.get("local_seo")
+
     prompt = f"""Write a monthly SEO progress report for {report.get('domain','')}.
 
 Health Score: {audit['health_score'] if audit else 'N/A'}/100 (change: {audit.get('score_change',0):+.1f}) | Issues: {audit['total_issues'] if audit else 0} ({audit.get('issues_change',0):+d} vs previous)
@@ -350,15 +389,19 @@ Resources fixed: {', '.join([f"{c} {t}s" for t, c in fixes.get('by_resource',{})
 {_strategy_block(report)}
 {_hub_block(report)}
 
+{f"GEO (AI Search) Score: {geo['overall_score']}/100 — Content Structure: {geo['content_structure']}, Schema: {geo['schema_data']}, Authority: {geo['authority_trust']}, Freshness: {geo['freshness']}, Citability: {geo['citability']}" if geo else ''}
+{f"Local SEO: GBP {'claimed' if local and local.get('gbp_status') == 'claimed' else 'not claimed'}, {local.get('review_count',0)} reviews, {local.get('avg_rating','N/A')}★ rating" if local else ''}
+
 {f"Improved: {', '.join([c['query']+' (+'+str(c['change'])+')' for c in kw.get('ranking_changes',{}).get('improved',[])[:5]])}" if kw and kw.get('ranking_changes',{}).get('improved') else ''}
 {f"Declined: {', '.join([c['query']+' ('+str(c['change'])+')' for c in kw.get('ranking_changes',{}).get('declined',[])[:5]])}" if kw and kw.get('ranking_changes',{}).get('declined') else ''}
 
-Write 5 paragraphs:
+Write 6 paragraphs:
 1) Overall SEO trajectory and health score trend
 2) Organic search performance - clicks, impressions, keyword growth vs last month AND since tracking began
 3) Primary keyword ranking changes and tracked keyword progress
 4) Technical work completed - specific numbers of alt texts added, meta titles fixed, content expanded, etc.
-5) Recommended next steps based on current gaps
+5) GEO (AI Search) readiness — how well the site is optimized for ChatGPT, Perplexity, Google AI Overviews
+6) Recommended next steps based on current gaps
 Be specific with numbers. Professional tone."""
 
     try:
