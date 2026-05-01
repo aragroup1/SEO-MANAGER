@@ -22,6 +22,36 @@ from database import (
 load_dotenv()
 
 
+# ─── In-memory overseer status (per process) ───
+# Maps website_id (or "all") -> {phase, message, started_at, finished_at, error}
+_overseer_status: Dict[Any, Dict[str, Any]] = {}
+
+
+def _set_phase(key: Any, phase: str, message: str):
+    _overseer_status[key] = {
+        "phase": phase,
+        "message": message,
+        "started_at": _overseer_status.get(key, {}).get("started_at") or datetime.utcnow().isoformat(),
+        "finished_at": None,
+        "error": None,
+    }
+
+
+def _finish(key: Any, error: str = None):
+    cur = _overseer_status.get(key, {})
+    cur["phase"] = "idle"
+    cur["message"] = "Idle"
+    cur["finished_at"] = datetime.utcnow().isoformat()
+    cur["error"] = error
+    _overseer_status[key] = cur
+
+
+def get_overseer_status(website_id: int = None) -> Dict[str, Any]:
+    """Return current overseer status for a website (or 'all'). Returns idle if nothing recorded."""
+    key = website_id if website_id is not None else "all"
+    return _overseer_status.get(key, {"phase": "idle", "message": "Idle", "started_at": None, "finished_at": None, "error": None})
+
+
 async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
     """
     Run a full AI Overseer cycle for one or all websites.
@@ -48,9 +78,13 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
         if not websites:
             return {"error": "No websites found"}
 
+        status_key = website_id if website_id is not None else "all"
+
         for website in websites:
             site_result = {"domain": website.domain, "id": website.id, "actions": []}
             print(f"\n[Overseer] ═══ Starting cycle for {website.domain} ═══")
+            _set_phase(status_key, "audit", f"Running audit for {website.domain}")
+            _set_phase(website.id, "audit", f"Running audit for {website.domain}")
 
             # ─── Step 1: Run Audit ───
             try:
@@ -81,6 +115,8 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
 
                 if integration:
                     print(f"[Overseer] Step 2: Syncing keywords from GSC...")
+                    _set_phase(status_key, "keywords", f"Syncing keywords for {website.domain}")
+                    _set_phase(website.id, "keywords", f"Syncing keywords for {website.domain}")
                     from search_console import fetch_keyword_data
                     kw_result = await fetch_keyword_data(website.id, days=7)
                     total_kw = kw_result.get("total_keywords", 0)
@@ -105,6 +141,8 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
             # ─── Step 3: GEO Fix Scan ───
             try:
                 print(f"[Overseer] Step 3: Scanning for GEO fixes...")
+                _set_phase(status_key, "geo", f"Scanning GEO opportunities for {website.domain}")
+                _set_phase(website.id, "geo", f"Scanning GEO opportunities for {website.domain}")
                 from geo_fix_engine import scan_and_generate_geo_fixes
                 geo_result = await scan_and_generate_geo_fixes(website.id)
                 geo_fixes = geo_result.get("total_fixes", 0)
@@ -122,6 +160,8 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
             if website.site_type in ["shopify", "wordpress"]:
                 try:
                     print(f"[Overseer] Step 4: Scanning for {website.site_type} fixes...")
+                    _set_phase(status_key, "fixes", f"Generating {website.site_type} fixes for {website.domain}")
+                    _set_phase(website.id, "fixes", f"Generating {website.site_type} fixes for {website.domain}")
                     from fix_engine import generate_fixes_for_website
                     fix_result = await generate_fixes_for_website(website.id)
                     platform_fixes = fix_result.get("total_fixes", 0)
@@ -153,6 +193,8 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
 
                 if striking:
                     print(f"[Overseer] Step 5: Refreshing strategies for {len(striking)} striking distance keywords...")
+                    _set_phase(status_key, "strategy", f"Refreshing strategies for {website.domain}")
+                    _set_phase(website.id, "strategy", f"Refreshing strategies for {website.domain}")
                     from road_to_one import generate_road_to_one_strategy
                     refreshed = 0
                     for tk in striking[:3]:  # Max 3 per cycle to control API costs
@@ -194,8 +236,22 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
         print(f"[Overseer] Critical error: {e}")
         import traceback
         traceback.print_exc()
+        try:
+            _finish(website_id if website_id is not None else "all", error=str(e))
+            if website_id is not None:
+                _finish(website_id, error=str(e))
+        except Exception:
+            pass
         return {"error": str(e)}
     finally:
+        try:
+            key = website_id if website_id is not None else "all"
+            if _overseer_status.get(key, {}).get("phase") not in ("idle", None):
+                _finish(key)
+            if website_id is not None and _overseer_status.get(website_id, {}).get("phase") not in ("idle", None):
+                _finish(website_id)
+        except Exception:
+            pass
         db.close()
 
 

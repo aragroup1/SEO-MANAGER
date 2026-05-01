@@ -1005,6 +1005,13 @@ async def run_overseer_all(background_tasks: BackgroundTasks):
     return {"status": "running", "message": "AI Overseer started for all websites."}
 
 
+@app.get("/api/overseer/status")
+async def overseer_status(website_id: Optional[int] = None):
+    """Return current AI Overseer phase. Reflects real backend activity (no fake messages)."""
+    from ai_overseer import get_overseer_status
+    return get_overseer_status(website_id)
+
+
 @app.get("/api/websites/{website_id}/automation-summary")
 async def get_automation_summary(website_id: int, days: int = 7):
     """Get automation summary for a website (auto-approved/applied fixes)."""

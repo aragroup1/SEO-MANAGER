@@ -15,7 +15,11 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('backend/integrations.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('backend/fix_engine.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('fix_engine.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(curl -sS \"https://backend-production-6104.up.railway.app/api/strategist/1/saved\")"
+      "Bash(curl -sS \"https://backend-production-6104.up.railway.app/api/strategist/1/saved\")",
+      "Bash(grep -E \":\\\\s*$\")",
+      "Bash(grep -n \"except.*:$\" main.py)",
+      "Bash(grep -rn \"except:$\" --include=\"*.py\" .)",
+      "Bash(python3 -c \"import ast; [print\\(f'{n.name}:{n.lineno}'\\) for n in ast.walk\\(ast.parse\\(open\\('fix_engine.py'\\).read\\(\\)\\)\\) if isinstance\\(n, ast.FunctionDef\\)]\")"
     ]
   }
 }

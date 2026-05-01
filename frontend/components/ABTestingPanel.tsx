@@ -100,6 +100,14 @@ export default function ABTestingPanel({ websiteId }: Props) {
         </button>
       </div>
 
+      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 flex items-start gap-2">
+        <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-amber-300 text-xs font-medium">Preview — metrics are simulated</p>
+          <p className="text-[#a1a1aa] text-xs mt-0.5">A/B test creation, variants, and winner selection are functional. Click-through rate and impression numbers shown on results are placeholder data; real GSC CTR integration is not yet wired.</p>
+        </div>
+      </div>
+
       {/* Create Form */}
       <AnimatePresence>
         {showCreate && (

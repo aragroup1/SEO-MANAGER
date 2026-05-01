@@ -80,7 +80,7 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedWebsite, setSelectedWebsite] = useState<number | null>(null);
   const [websites, setWebsites] = useState<Website[]>([]);
-  const [aiStatus, setAiStatus] = useState({ status: 'active', message: 'Analyzing rankings...' });
+  const [aiStatus, setAiStatus] = useState<{ phase: string; message: string }>({ phase: 'idle', message: 'Idle' });
   const [showWebsitePicker, setShowWebsitePicker] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -174,19 +174,30 @@ export default function Dashboard() {
   }, [API_URL, selectedWebsite]);
 
   useEffect(() => { if (authenticated) fetchWebsites(); }, [authenticated]);
-  useEffect(() => { if (activeTab === 'websites' && authenticated) fetchWebsites(); }, [activeTab]);
+  useEffect(() => { if ((activeTab === 'settings' || activeTab === 'overview') && authenticated) fetchWebsites(); }, [activeTab]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      const messages = [
-        'Analyzing competitor strategies...', 'Optimizing product descriptions...',
-        'Fixing technical errors...', 'Generating content ideas...',
-        'Monitoring AI search results...', 'Updating keyword rankings...'
-      ];
-      setAiStatus({ status: 'active', message: messages[Math.floor(Math.random() * messages.length)] });
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!authenticated) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const url = selectedWebsite
+          ? `${API_URL}/api/overseer/status?website_id=${selectedWebsite}`
+          : `${API_URL}/api/overseer/status`;
+        const r = await fetch(url);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (cancelled) return;
+        setAiStatus({
+          phase: d.phase || 'idle',
+          message: d.message || 'Idle',
+        });
+      } catch { /* offline — stay on previous status */ }
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [authenticated, selectedWebsite, API_URL]);
 
   const handleSelectWebsite = (websiteId: number) => {
     setSelectedWebsite(websiteId);
@@ -194,7 +205,13 @@ export default function Dashboard() {
   };
 
   const selectedSite = websites.find(w => w.id === selectedWebsite);
-  const websiteRequiredTabs = ['audit', 'keywords', 'road-to-one', 'issues', 'index-tracker', 'content', 'competitors', 'ai-search', 'strategist', 'reports', 'settings', 'summary', 'link-checker'];
+  const websiteRequiredTabs = [
+    'audit', 'keywords', 'road-to-one', 'issues', 'index-tracker',
+    'content', 'competitors', 'ai-search', 'strategist', 'reports',
+    'settings', 'summary', 'link-checker',
+    'web-vitals', 'schema', 'sitemap', 'robots', 'images', 'ab-tests',
+    'local-seo', 'notifications',
+  ];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
@@ -212,6 +229,7 @@ export default function Dashboard() {
     { id: 'sitemap', label: 'Sitemap', icon: FileCode },
     { id: 'robots', label: 'Robots.txt', icon: Shield },
     { id: 'images', label: 'Images', icon: Image },
+    { id: 'link-checker', label: 'Link Checker', icon: Link2 },
     { id: 'ab-tests', label: 'A/B Tests', icon: Split },
     { id: 'local-seo', label: 'Local SEO', icon: MapPin },
     { id: 'divider3', label: '', icon: null },
@@ -390,8 +408,10 @@ export default function Dashboard() {
             <div className="p-3 border-t border-white/[0.06]">
               <div className="flex items-center gap-2">
                 <div className="relative">
-                  <Bot className="w-4 h-4 text-[#4ade80]" />
-                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-[#4ade80] rounded-full animate-ping" />
+                  <Bot className={`w-4 h-4 ${aiStatus.phase !== 'idle' ? 'text-[#4ade80]' : 'text-[#52525b]'}`} />
+                  {aiStatus.phase !== 'idle' && (
+                    <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-[#4ade80] rounded-full animate-ping" />
+                  )}
                 </div>
                 <p className="text-[10px] text-[#52525b] truncate">{aiStatus.message}</p>
               </div>
@@ -420,8 +440,8 @@ export default function Dashboard() {
                 <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
                 <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">No Websites Added</h3>
                 <p className="text-[#52525b] mb-6">Add a website first to start using this feature.</p>
-                <button onClick={() => setActiveTab('websites')} className="btn-premium">
-                  Go to Websites <ChevronRight className="w-4 h-4" />
+                <button onClick={() => setActiveTab('settings')} className="btn-premium">
+                  Go to Settings <ChevronRight className="w-4 h-4" />
                 </button>
               </motion.div>
             )}
