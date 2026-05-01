@@ -39,6 +39,8 @@ const ABTestingPanel = lazy(() => import('@/components/ABTestingPanel'));
 const LocalSEOPanel = lazy(() => import('@/components/LocalSEOPanel'));
 const NotificationSettings = lazy(() => import('@/components/NotificationSettings'));
 const IndexTracker = lazy(() => import('@/components/IndexTracker'));
+const WebsiteManager = lazy(() => import('@/components/WebsiteManager'));
+const IntegrationSetupChecklist = lazy(() => import('@/components/IntegrationSetupChecklist'));
 
 interface Website {
   id: number;
@@ -215,6 +217,7 @@ export default function Dashboard() {
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
   const navItems = [
+    { id: 'sites', label: 'Sites', icon: Globe },
     { id: 'overview', label: 'Overview', icon: Compass },
     { id: 'summary', label: 'Summary', icon: Layers },
     { id: 'divider1', label: '', icon: null },
@@ -440,8 +443,8 @@ export default function Dashboard() {
                 <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
                 <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">No Websites Added</h3>
                 <p className="text-[#52525b] mb-6">Add a website first to start using this feature.</p>
-                <button onClick={() => setActiveTab('settings')} className="btn-premium">
-                  Go to Settings <ChevronRight className="w-4 h-4" />
+                <button onClick={() => setActiveTab('sites')} className="btn-premium">
+                  Go to Sites <ChevronRight className="w-4 h-4" />
                 </button>
               </motion.div>
             )}
@@ -485,23 +488,46 @@ export default function Dashboard() {
                   )}
 
                   {websites.length > 0 ? (
-                    <OverviewDashboard
-                      onSelectWebsite={handleSelectWebsite}
-                      selectedWebsite={selectedWebsite}
-                      onAddWebsite={() => setActiveTab('settings')}
-                      onOpenSettings={() => setActiveTab('settings')}
-                    />
+                    <>
+                      {selectedWebsite && selectedSite && (
+                        <Suspense fallback={null}>
+                          <IntegrationSetupChecklist
+                            websiteId={selectedWebsite}
+                            siteType={selectedSite.site_type}
+                            onIntegrationChange={fetchWebsites}
+                          />
+                        </Suspense>
+                      )}
+                      <OverviewDashboard
+                        onSelectWebsite={handleSelectWebsite}
+                        selectedWebsite={selectedWebsite}
+                        onAddWebsite={() => setActiveTab('sites')}
+                        onOpenSettings={() => setActiveTab('settings')}
+                      />
+                    </>
                   ) : (
                     <motion.div variants={fadeUpVariants} initial="hidden" animate="visible" className="card-liquid p-12 text-center">
                       <Globe className="w-12 h-12 text-[#7c6cf9] mx-auto mb-4" />
                       <h3 className="text-xl font-bold text-[#f5f5f7] mb-2">Welcome to SEO Intelligence</h3>
                       <p className="text-[#52525b] mb-6">Add your first website to start tracking SEO performance.</p>
-                      <button onClick={() => setActiveTab('settings')} className="btn-premium">
+                      <button onClick={() => setActiveTab('sites')} className="btn-premium">
                         Add Website <ChevronRight className="w-4 h-4" />
                       </button>
                     </motion.div>
                   )}
                 </motion.div>
+              )}
+
+              {activeTab === 'sites' && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key="sites" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <WebsiteManager
+                      onSelectWebsite={(id) => { setSelectedWebsite(id); setActiveTab('overview'); }}
+                      onWebsitesChange={fetchWebsites}
+                    />
+                  </motion.div>
+                </Suspense>
               )}
 
               {activeTab === 'summary' && selectedWebsite && (
