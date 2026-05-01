@@ -1,7 +1,8 @@
 # backend/keyword_routes.py - API endpoints for keyword tracking
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import asyncio
 import os
@@ -723,3 +724,39 @@ async def test_dataforseo():
             }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# ─── Keyword Clustering & Intent (Gemini-powered) ───
+
+class _ClusterReq(BaseModel):
+    keywords: List[str]
+    target_clusters: Optional[int] = None
+
+
+class _IntentReq(BaseModel):
+    queries: List[str]
+
+
+@router.post("/cluster")
+async def cluster_keywords_endpoint(req: _ClusterReq):
+    """Group keywords into topical clusters with a representative head term per cluster."""
+    if not req.keywords:
+        raise HTTPException(status_code=400, detail="keywords list is empty")
+    try:
+        from keyword_clustering import cluster_keywords
+        return await cluster_keywords(req.keywords, req.target_clusters)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clustering failed: {e}")
+
+
+@router.post("/intent")
+async def classify_intent_endpoint(req: _IntentReq):
+    """Classify search intent (informational/navigational/transactional/commercial) for each query."""
+    if not req.queries:
+        raise HTTPException(status_code=400, detail="queries list is empty")
+    try:
+        from keyword_clustering import classify_intent
+        return await classify_intent(req.queries)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Intent classification failed: {e}")
+

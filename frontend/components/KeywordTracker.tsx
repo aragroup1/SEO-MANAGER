@@ -9,6 +9,7 @@ import {
   BarChart3, Hash, AlertTriangle, Star, Trash2, Trophy,
   ChevronDown, ChevronUp, X, Globe
 } from 'lucide-react';
+import AIOptimizer from './AIOptimizer';
 
 interface Keyword {
   query: string;
@@ -85,7 +86,7 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
   const [positionFilter, setPositionFilter] = useState('all');
   const [showTracked, setShowTracked] = useState(true);
   const [trackingInProgress, setTrackingInProgress] = useState<string | null>(null);
-  const [subTab, setSubTab] = useState<'rankings' | 'research'>('rankings');
+  const [subTab, setSubTab] = useState<'rankings' | 'research' | 'ai-tools'>('rankings');
   const [dateRange, setDateRange] = useState(3); // 3=latest, 7=week, 28=month, 90=quarter
 
   // Detail panel
@@ -532,7 +533,13 @@ export default function KeywordTracker({ websiteId }: { websiteId: number }) {
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${subTab === 'research' ? 'bg-purple-500/30 text-white border border-purple-500/50' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
           Keyword Research
         </button>
+        <button onClick={() => setSubTab('ai-tools')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${subTab === 'ai-tools' ? 'bg-purple-500/30 text-white border border-purple-500/50' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
+          AI Tools
+        </button>
       </div>
+
+      {subTab === 'ai-tools' && <AIOptimizer websiteId={websiteId} />}
 
       {subTab === 'research' && (
         <div className="space-y-4">
