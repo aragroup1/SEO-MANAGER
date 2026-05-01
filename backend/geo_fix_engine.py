@@ -113,7 +113,7 @@ async def _crawl_page(session: aiohttp.ClientSession, url: str) -> Dict[str, Any
                     schema_types.extend(types)
                     if 'FAQPage' in types:
                         has_faq = True
-                except:
+                except Exception:
                     pass
 
             import re

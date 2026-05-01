@@ -142,7 +142,7 @@ FORMAT YOUR RESPONSE AS JSON:
 
                 try:
                     content_data = json.loads(text)
-                except:
+                except Exception:
                     content_data = {"title": topic, "content_html": text, "meta_title": topic[:60], "meta_description": topic[:155]}
 
                 # Save to database
@@ -263,7 +263,7 @@ Return JSON:
                 try:
                     ideas = json.loads(text)
                     return {"ideas": ideas}
-                except:
+                except Exception:
                     return {"ideas": [], "raw": text}
             return {"error": f"AI error: {resp.status_code}"}
 
@@ -327,7 +327,7 @@ async def publish_content(website_id: int, content_id: int) -> Dict[str, Any]:
         if content.ai_generated_content:
             try:
                 content_data = json.loads(content.ai_generated_content)
-            except:
+            except Exception:
                 content_data = {"content_html": content.ai_generated_content, "title": content.title}
 
         title = content_data.get("title", content.title)

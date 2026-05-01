@@ -144,7 +144,7 @@ async def fetch_ga4_traffic(website_id: int, days: int = 30) -> Dict[str, Any]:
                     name = metric_headers[i]["name"] if i < len(metric_headers) else f"metric_{i}"
                     try:
                         metrics[name] = float(val.get("value", 0))
-                    except:
+                    except Exception:
                         metrics[name] = 0
 
                 if not current_metrics:
@@ -239,11 +239,11 @@ async def fetch_ga4_traffic(website_id: int, days: int = 30) -> Dict[str, Any]:
         # Build result
         def _safe_int(d, key):
             try: return int(d.get(key, 0))
-            except: return 0
+            except Exception: return 0
 
         def _safe_float(d, key):
             try: return round(float(d.get(key, 0)), 2)
-            except: return 0
+            except Exception: return 0
 
         result = {
             "property_id": property_id,

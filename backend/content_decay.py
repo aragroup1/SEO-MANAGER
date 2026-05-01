@@ -78,7 +78,7 @@ async def _check_page_freshness(session: aiohttp.ClientSession, url: str) -> Dic
                 try:
                     from email.utils import parsedate_to_datetime
                     signals["last_modified"] = parsedate_to_datetime(last_modified).isoformat()
-                except:
+                except Exception:
                     signals["last_modified_raw"] = last_modified
 
             # 2. Published date from meta tags
@@ -126,7 +126,7 @@ async def _check_page_freshness(session: aiohttp.ClientSession, url: str) -> Dic
                         signals["schema_date_modified"] = str(ld['dateModified'])[:10]
                     if ld.get('datePublished'):
                         signals["schema_date_published"] = str(ld['datePublished'])[:10]
-                except:
+                except Exception:
                     pass
 
             # Title and word count
@@ -165,7 +165,7 @@ def _calculate_freshness_score(signals: Dict) -> int:
                 score += 10
             elif days_ago > 365:
                 score -= 20
-        except:
+        except Exception:
             pass
 
     # Check if mentions current year
@@ -341,7 +341,7 @@ async def _find_competitor_urls(keyword: str) -> List[str]:
                 text = text.replace("```json", "").replace("```", "").strip()
                 urls = json.loads(text)
                 return [u for u in urls if u.startswith("http")][:3]
-    except:
+    except Exception:
         pass
     return []
 

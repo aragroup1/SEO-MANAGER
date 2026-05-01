@@ -202,7 +202,7 @@ async def run_overseer_cycle(website_id: int = None) -> Dict[str, Any]:
                             await generate_road_to_one_strategy(website.id, tk.id)
                             refreshed += 1
                             await asyncio.sleep(2)  # Rate limit
-                        except:
+                        except Exception:
                             pass
                     site_result["actions"].append({
                         "step": "strategy_refresh",

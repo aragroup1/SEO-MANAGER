@@ -517,7 +517,7 @@ async def connect_integration(website_id: int, request: Request, db: Session = D
                             try:
                                 err = write_resp.json()
                                 write_msg = err.get("message", str(write_resp.status_code))
-                            except:
+                            except Exception:
                                 write_msg = f"Status {write_resp.status_code}"
 
                 print(f"[WordPress] Connection test PASSED (read=OK, write={'OK' if write_ok else 'FAILED: ' + write_msg})")

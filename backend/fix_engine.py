@@ -1230,7 +1230,7 @@ class WordPressFixEngine:
             content = await self._xmlrpc_get_content(resource_id)
             if content:
                 print(f"[WP Fix] Got raw content via XML-RPC for {fix.resource_type} {resource_id}")
-        except:
+        except Exception:
             pass
 
         if not content:

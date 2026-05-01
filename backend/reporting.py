@@ -39,7 +39,7 @@ async def generate_report_data(website_id: int, month: str = None) -> Dict[str, 
                     _, prev_last = monthrange(year, mo - 1)
                     prev_month_start = datetime(year, mo - 1, 1)
                     prev_month_end = datetime(year, mo - 1, prev_last, 23, 59, 59)
-            except:
+            except Exception:
                 pass
 
         report = {"domain": website.domain, "site_type": website.site_type,

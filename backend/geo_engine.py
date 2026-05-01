@@ -100,7 +100,7 @@ async def _crawl_page_for_geo(session: aiohttp.ClientSession, url: str) -> Dict[
                         if st in ['Article', 'BlogPosting', 'NewsArticle']: has_article_schema = True
                         if st == 'Organization': has_organization_schema = True
                         if st in ['Person', 'ProfilePage']: has_author_schema = True
-                except:
+                except Exception:
                     pass
 
             # 2. FAQ content (even without schema)
@@ -248,7 +248,7 @@ async def run_geo_audit(website_id: int) -> Dict[str, Any]:
                                 result = await _crawl_page_for_geo(session, link_url)
                                 page_results.append(result)
                                 await asyncio.sleep(0.3)
-                except:
+                except Exception:
                     pass
 
             # Crawl about/contact pages

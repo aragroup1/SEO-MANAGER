@@ -299,7 +299,7 @@ def _generate_pdf_fpdf(data: dict) -> bytes:
         pdf.set_font("Helvetica", "", 10)
         lcp = cwv.get("lcp", 0) or 0
         try: lcp_f = float(lcp)
-        except: lcp_f = 0
+        except Exception: lcp_f = 0
         lcp_verdict = "Fast" if lcp_f <= 2.5 else ("OK" if lcp_f <= 4 else "Slow")
         perf = cwv.get("performance_score", 0) or 0
         pdf.multi_cell(0, 5, _safe(f"Main content loads in {lcp}s ({lcp_verdict}). Overall speed score: {perf}/100."))

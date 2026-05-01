@@ -227,7 +227,7 @@ async def health_check():
         db.execute(text("SELECT 1"))
         db.close()
         db_status = "connected"
-    except:
+    except Exception:
         db_status = "disconnected"
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "database": db_status, "version": "1.0.0"}
 
@@ -604,7 +604,7 @@ async def get_content_item(website_id: int, content_id: int, db: Session = Depen
     if item.ai_generated_content:
         try:
             content_data = json.loads(item.ai_generated_content)
-        except:
+        except Exception:
             content_data = {"content_html": item.ai_generated_content}
     return {"id": item.id, "title": item.title, "content_type": item.content_type, "status": item.status, "keywords": item.keywords_target, "content": content_data}
 
@@ -666,13 +666,6 @@ async def delete_content_item(website_id: int, content_id: int, db: Session = De
     return {"deleted": True}
 
 # --- Competitor Analysis ---
-
-@app.post("/api/competitors/{website_id}/analyze")
-async def analyze_competitors(website_id: int, background_tasks: BackgroundTasks):
-    async def mock_analysis():
-        await asyncio.sleep(2)
-    background_tasks.add_task(mock_analysis)
-    return {"status": "success", "message": "Competitor analysis initiated"}
 
 @app.post("/api/competitors/{website_id}/research")
 async def research_competitor(website_id: int, request: Request, db: Session = Depends(get_db)):
@@ -907,7 +900,7 @@ async def analyze_decay(website_id: int, background_tasks: BackgroundTasks, db: 
                 try:
                     dt = _dt2.fromisoformat(str(v).replace("Z", "+00:00").split("+")[0])
                     return max(0, (_dt2.utcnow() - dt).days)
-                except: pass
+                except Exception: pass
             return 0
         items = []
         for p in raw.get("own_pages", []):
@@ -1558,7 +1551,7 @@ async def startup_event():
                 try:
                     conn.execute(text(migration))
                     conn.commit()
-                except:
+                except Exception:
                     pass
         print("Database schema updated")
     except Exception as e:

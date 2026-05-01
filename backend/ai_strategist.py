@@ -129,7 +129,7 @@ def _build_full_intelligence(website_id: int, db: Session) -> Dict[str, Any]:
         if tk.notes:
             try:
                 strategy = json.loads(tk.notes)
-            except:
+            except Exception:
                 strategy = {"raw": tk.notes}
 
         intel["tracked_keywords"].append({
@@ -406,7 +406,7 @@ Be extremely specific. Use actual keyword names, actual page URLs, actual number
                 text = text.replace("```json", "").replace("```", "").strip()
                 try:
                     strategy = json.loads(text)
-                except:
+                except Exception:
                     strategy = {"raw_strategy": text}
 
                 # Save strategy to website
@@ -495,7 +495,7 @@ Maximum 5 items per category. Only the most impactful work."""
                 text = text.replace("```json", "").replace("```", "").strip()
                 try:
                     plan = json.loads(text)
-                except:
+                except Exception:
                     plan = {"raw_plan": text}
                 return {"plan": plan, "generated_at": datetime.utcnow().isoformat()}
             else:

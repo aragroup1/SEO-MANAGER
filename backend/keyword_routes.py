@@ -336,7 +336,7 @@ async def get_strategy(website_id: int, keyword_id: int, db: Session = Depends(g
             "your_page": data.get("your_page"),
             "generated_at": data.get("generated_at"),
         }
-    except:
+    except Exception:
         return {"strategy": None, "notes": tk.notes}
 
 
@@ -360,7 +360,7 @@ async def refresh_live_rankings(website_id: int, request: Request, db: Session =
     body = {}
     try:
         body = await request.json()
-    except:
+    except Exception:
         pass
     force = bool(body.get("force"))
     keyword_ids = body.get("keyword_ids")  # optional list to refresh specific ones

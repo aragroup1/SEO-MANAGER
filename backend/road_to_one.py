@@ -131,7 +131,7 @@ async def _crawl_page(session: aiohttp.ClientSession, url: str) -> Dict[str, Any
                         schema_types.extend(t)
                     elif t:
                         schema_types.append(t)
-                except:
+                except Exception:
                     pass
 
             # Canonical
