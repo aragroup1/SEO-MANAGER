@@ -41,6 +41,7 @@ const NotificationSettings = lazy(() => import('@/components/NotificationSetting
 const IndexTracker = lazy(() => import('@/components/IndexTracker'));
 const WebsiteManager = lazy(() => import('@/components/WebsiteManager'));
 const IntegrationSetupChecklist = lazy(() => import('@/components/IntegrationSetupChecklist'));
+const PortfolioOverview = lazy(() => import('@/components/PortfolioOverview'));
 
 interface Website {
   id: number;
@@ -85,6 +86,8 @@ export default function Dashboard() {
   const [aiStatus, setAiStatus] = useState<{ phase: string; message: string }>({ phase: 'idle', message: 'Idle' });
   const [showWebsitePicker, setShowWebsitePicker] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const toggleSection = (id: string) => setCollapsedSections(s => ({ ...s, [id]: !s[id] }));
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
   const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('seo_token') || '' : '';
@@ -216,33 +219,46 @@ export default function Dashboard() {
   ];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
-  const navItems = [
-    { id: 'sites', label: 'Sites', icon: Globe },
-    { id: 'overview', label: 'Overview', icon: Compass },
-    { id: 'summary', label: 'Summary', icon: Layers },
-    { id: 'divider1', label: '', icon: null },
-    { id: 'audit', label: 'Site Audit', icon: FileSearch },
-    { id: 'keywords', label: 'Keywords', icon: Target },
-    { id: 'road-to-one', label: 'Road to #1', icon: Trophy },
-    { id: 'issues', label: 'Issues & Fixes', icon: Wand2 },
-    { id: 'index-tracker', label: 'Index Tracker', icon: Search },
-    { id: 'divider2', label: '', icon: null },
-    { id: 'web-vitals', label: 'Web Vitals', icon: Gauge },
-    { id: 'schema', label: 'Schema', icon: FileCode },
-    { id: 'sitemap', label: 'Sitemap', icon: FileCode },
-    { id: 'robots', label: 'Robots.txt', icon: Shield },
-    { id: 'images', label: 'Images', icon: Image },
-    { id: 'link-checker', label: 'Link Checker', icon: Link2 },
-    { id: 'ab-tests', label: 'A/B Tests', icon: Split },
-    { id: 'local-seo', label: 'Local SEO', icon: MapPin },
-    { id: 'divider3', label: '', icon: null },
-    { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
-    { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
-    { id: 'content', label: 'Content Writer', icon: FileText },
-    { id: 'competitors', label: 'Competitors', icon: Users },
-    { id: 'divider4', label: '', icon: null },
-    { id: 'reports', label: 'Reports', icon: BarChart3 },
-    { id: 'notifications', label: 'Notifications', icon: Bell },
+  const navSections: { id: string; label: string; items: { id: string; label: string; icon: any }[] }[] = [
+    {
+      id: 'core', label: 'Core', items: [
+        { id: 'sites', label: 'Sites', icon: Globe },
+        { id: 'overview', label: 'Overview', icon: Compass },
+        { id: 'portfolio', label: 'Portfolio', icon: Layers },
+        { id: 'summary', label: 'Summary', icon: Layers },
+      ],
+    },
+    {
+      id: 'onpage', label: 'On-Page Tools', items: [
+        { id: 'audit', label: 'Site Audit', icon: FileSearch },
+        { id: 'keywords', label: 'Keywords', icon: Target },
+        { id: 'road-to-one', label: 'Road to #1', icon: Trophy },
+        { id: 'issues', label: 'Issues & Fixes', icon: Wand2 },
+        { id: 'index-tracker', label: 'Index Tracker', icon: Search },
+        { id: 'web-vitals', label: 'Web Vitals', icon: Gauge },
+        { id: 'schema', label: 'Schema', icon: FileCode },
+        { id: 'sitemap', label: 'Sitemap', icon: FileCode },
+        { id: 'robots', label: 'Robots.txt', icon: Shield },
+        { id: 'images', label: 'Images', icon: Image },
+        { id: 'link-checker', label: 'Link Checker', icon: Link2 },
+        { id: 'ab-tests', label: 'A/B Tests', icon: Split },
+        { id: 'local-seo', label: 'Local SEO', icon: MapPin },
+      ],
+    },
+    {
+      id: 'ai', label: 'AI', items: [
+        { id: 'ai-search', label: 'AI Search (GEO)', icon: Brain },
+        { id: 'strategist', label: 'AI Strategist', icon: MessageSquare },
+        { id: 'content', label: 'Content Writer', icon: FileText },
+        { id: 'competitors', label: 'Competitors', icon: Users },
+      ],
+    },
+    {
+      id: 'reports', label: 'Reports', items: [
+        { id: 'reports', label: 'Reports', icon: BarChart3 },
+        { id: 'notifications', label: 'Notifications', icon: Bell },
+      ],
+    },
   ];
 
   // ─── Auth Loading ───
@@ -370,22 +386,33 @@ export default function Dashboard() {
 
           {/* Nav Items */}
           <nav className="flex-1 py-2 px-2 overflow-y-auto">
-            {navItems.map((item) => {
-              if (item.id.startsWith('divider')) {
-                return <div key={item.id} className="my-2 mx-2 border-t border-white/[0.06]" />;
-              }
-              const Icon = item.icon!;
-              const isActive = activeTab === item.id;
+            {navSections.map((section, idx) => {
+              const isCollapsed = !!collapsedSections[section.id];
               return (
-                <button key={item.id} onClick={() => setActiveTab(item.id)} title={sidebarCollapsed ? item.label : undefined}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 mb-0.5 ${
-                    isActive
-                      ? 'bg-[#7c6cf9]/10 text-[#f5f5f7] border border-[#7c6cf9]/20'
-                      : 'text-[#52525b] hover:bg-white/[0.03] hover:text-[#a1a1aa] border border-transparent'
-                  }`}>
-                  <Icon className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-[#7c6cf9]' : ''}`} />
-                  {!sidebarCollapsed && <span>{item.label}</span>}
-                </button>
+                <div key={section.id} className={idx > 0 ? 'mt-3' : ''}>
+                  {!sidebarCollapsed && (
+                    <button onClick={() => toggleSection(section.id)}
+                      className="w-full flex items-center justify-between px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#52525b] hover:text-[#a1a1aa] font-semibold transition-all">
+                      <span>{section.label}</span>
+                      <ChevronDown className={`w-3 h-3 transition-transform ${isCollapsed ? '-rotate-90' : ''}`} />
+                    </button>
+                  )}
+                  {(!isCollapsed || sidebarCollapsed) && section.items.map(item => {
+                    const Icon = item.icon;
+                    const isActive = activeTab === item.id;
+                    return (
+                      <button key={item.id} onClick={() => setActiveTab(item.id)} title={sidebarCollapsed ? item.label : undefined}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 mb-0.5 ${
+                          isActive
+                            ? 'bg-[#7c6cf9]/10 text-[#f5f5f7] border border-[#7c6cf9]/20'
+                            : 'text-[#52525b] hover:bg-white/[0.03] hover:text-[#a1a1aa] border border-transparent'
+                        }`}>
+                        <Icon className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-[#7c6cf9]' : ''}`} />
+                        {!sidebarCollapsed && <span>{item.label}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
           </nav>
@@ -526,6 +553,15 @@ export default function Dashboard() {
                       onSelectWebsite={(id) => { setSelectedWebsite(id); setActiveTab('overview'); }}
                       onWebsitesChange={fetchWebsites}
                     />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'portfolio' && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key="portfolio" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <PortfolioOverview onSelectWebsite={handleSelectWebsite} />
                   </motion.div>
                 </Suspense>
               )}
