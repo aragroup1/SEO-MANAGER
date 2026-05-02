@@ -456,6 +456,32 @@ class IndexStatus(Base):
     website = relationship("Website")
 
 
+class ClientRecipient(Base):
+    """Email recipient for daily ranking updates per website."""
+    __tablename__ = "client_recipients"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, ForeignKey("websites.id"), nullable=False, index=True)
+    email = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    send_hour_utc = Column(Integer, default=8)  # hour-of-day to send
+    last_sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ClientReportLog(Base):
+    """Log of daily client emails sent."""
+    __tablename__ = "client_report_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    website_id = Column(Integer, nullable=False, index=True)
+    recipient_id = Column(Integer, nullable=True, index=True)
+    email = Column(String, nullable=False)
+    status = Column(String, default="sent")  # sent | failed | skipped
+    error = Column(Text, nullable=True)
+    keywords_count = Column(Integer, default=0)
+    sent_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 # Create all tables (with fallback if primary engine fails)
 try:
     Base.metadata.create_all(bind=engine)

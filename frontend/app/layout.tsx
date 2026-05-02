@@ -1,12 +1,19 @@
 // frontend/app/layout.tsx
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 
-const inter = Inter({
+const sans = Inter({
   subsets: ['latin'],
-  display: 'swap', // Prevents FOIT (Flash of Invisible Text)
-  variable: '--font-inter',
+  display: 'swap',
+  variable: '--font-sans',
+})
+
+const mono = JetBrains_Mono({
+  subsets: ['latin'],
+  display: 'swap',
+  weight: ['500', '700'],
+  variable: '--font-mono',
 })
 
 export const metadata: Metadata = {
@@ -25,15 +32,13 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <head>
-        {/* Preconnect to API origin to reduce connection latency */}
         <link rel="preconnect" href={process.env.NEXT_PUBLIC_API_URL || 'https://seo-manager-production.up.railway.app'} />
-        {/* DNS prefetch for external services */}
         <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
         <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
       </head>
-      <body className={`${inter.className} bg-[#050505] min-h-screen antialiased`}>
+      <body className={`${sans.className} bg-[#050505] min-h-screen antialiased`}>
         {children}
       </body>
     </html>

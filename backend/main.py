@@ -138,6 +138,7 @@ from routers.competitors import router as competitors_router
 from routers.export import router as export_router
 from routers.monitoring import router as monitoring_router
 from routers.overseer import router as overseer_router, schedule_daily_audits
+from routers.client_reports import router as client_reports_router
 
 app.include_router(auth_router)
 app.include_router(admin_router)
@@ -148,6 +149,7 @@ app.include_router(competitors_router)
 app.include_router(export_router)
 app.include_router(monitoring_router)
 app.include_router(overseer_router)
+app.include_router(client_reports_router)
 
 # ─── Existing routers (pre-Phase 5) ───
 from integrations import router as integrations_router
@@ -352,6 +354,30 @@ async def startup_event():
                 "CREATE INDEX IF NOT EXISTS idx_index_status_url ON index_statuses(url)",
                 "CREATE INDEX IF NOT EXISTS idx_index_status_indexed ON index_statuses(is_indexed)",
                 "CREATE INDEX IF NOT EXISTS idx_index_status_checked ON index_statuses(last_checked)",
+                """CREATE TABLE IF NOT EXISTS client_recipients (
+                    id SERIAL PRIMARY KEY,
+                    website_id INTEGER NOT NULL REFERENCES websites(id),
+                    email VARCHAR NOT NULL,
+                    name VARCHAR,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    send_hour_utc INTEGER DEFAULT 8,
+                    last_sent_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_client_recipients_website ON client_recipients(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_client_recipients_email ON client_recipients(email)",
+                """CREATE TABLE IF NOT EXISTS client_report_logs (
+                    id SERIAL PRIMARY KEY,
+                    website_id INTEGER NOT NULL,
+                    recipient_id INTEGER,
+                    email VARCHAR NOT NULL,
+                    status VARCHAR DEFAULT 'sent',
+                    error TEXT,
+                    keywords_count INTEGER DEFAULT 0,
+                    sent_at TIMESTAMP DEFAULT NOW()
+                )""",
+                "CREATE INDEX IF NOT EXISTS idx_client_logs_website ON client_report_logs(website_id)",
+                "CREATE INDEX IF NOT EXISTS idx_client_logs_sent ON client_report_logs(sent_at)",
             ]
             for migration in migrations:
                 try:

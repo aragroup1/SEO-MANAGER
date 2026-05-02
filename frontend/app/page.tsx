@@ -10,7 +10,7 @@ import {
   Shield, Gauge, Award, Target, Rocket, Eye, Activity, Trophy,
   ChevronDown, Menu, X, MessageSquare, Lock, LogOut,
   ChevronRight, Compass, Layers, Wand2, Loader2,
-  FileCode, Image, Split, MapPin, Bell, Download
+  FileCode, Image, Split, MapPin, Bell, Download, Mail
 } from 'lucide-react';
 
 // Eagerly load only the components needed for initial render
@@ -42,6 +42,7 @@ const IndexTracker = lazy(() => import('@/components/IndexTracker'));
 const WebsiteManager = lazy(() => import('@/components/WebsiteManager'));
 const IntegrationSetupChecklist = lazy(() => import('@/components/IntegrationSetupChecklist'));
 const PortfolioOverview = lazy(() => import('@/components/PortfolioOverview'));
+const ClientReportsPanel = lazy(() => import('@/components/ClientReportsPanel'));
 
 interface Website {
   id: number;
@@ -215,7 +216,7 @@ export default function Dashboard() {
     'content', 'competitors', 'ai-search', 'strategist', 'reports',
     'settings', 'summary', 'link-checker',
     'web-vitals', 'schema', 'sitemap', 'robots', 'images', 'ab-tests',
-    'local-seo', 'notifications',
+    'local-seo', 'notifications', 'client-reports',
   ];
   const needsWebsite = websiteRequiredTabs.includes(activeTab);
 
@@ -256,6 +257,7 @@ export default function Dashboard() {
     {
       id: 'reports', label: 'Reports', items: [
         { id: 'reports', label: 'Reports', icon: BarChart3 },
+        { id: 'client-reports', label: 'Client Emails', icon: Mail },
         { id: 'notifications', label: 'Notifications', icon: Bell },
       ],
     },
@@ -752,6 +754,15 @@ export default function Dashboard() {
                   <motion.div key={`index-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
                     transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
                     <IndexTracker websiteId={selectedWebsite} />
+                  </motion.div>
+                </Suspense>
+              )}
+
+              {activeTab === 'client-reports' && selectedWebsite && (
+                <Suspense fallback={<TabLoader />}>
+                  <motion.div key={`crep-${selectedWebsite}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+                    transition={{ duration: 0.4, ease: [0.32, 0.72, 0, 1] }}>
+                    <ClientReportsPanel websiteId={selectedWebsite} />
                   </motion.div>
                 </Suspense>
               )}

@@ -307,7 +307,28 @@ def schedule_daily_audits():
             except Exception as e:
                 print(f"[Scheduler] Weekly overseer error: {e}")
 
+    def _client_reports_loop():
+        """Daily client ranking emails at 8 AM UTC."""
+        while True:
+            now = datetime.utcnow()
+            target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            print(f"[Scheduler] Next client reports run in {wait_seconds/3600:.1f} hours (8 AM UTC)")
+            time.sleep(wait_seconds)
+            try:
+                from client_reports import send_daily_reports_all
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(send_daily_reports_all())
+                loop.close()
+            except Exception as e:
+                print(f"[Scheduler] Client reports error: {e}")
+
     threading.Thread(target=_daily_loop, daemon=True).start()
     print("[Scheduler] Daily audit scheduler started (runs at 3 AM UTC)")
     threading.Thread(target=_weekly_loop, daemon=True).start()
     print("[Scheduler] Weekly overseer scheduler started (runs Monday 4 AM UTC)")
+    threading.Thread(target=_client_reports_loop, daemon=True).start()
+    print("[Scheduler] Client ranking reports scheduler started (runs at 8 AM UTC)")

@@ -5,20 +5,27 @@
 
 /* ─── Design Tokens ─── */
 :root {
-  --bg-deep: #050505;
-  --bg-elevated: #0a0a0a;
-  --bg-card: #0f0f12;
-  --bg-card-hover: #141418;
+  --bg-deep: #050507;
+  --bg-elevated: #0a0a0d;
+  --bg-card: #0f0f14;
+  --bg-card-hover: #141419;
   --accent-primary: #7c6cf9;
+  --accent: #7c6cf9;
   --accent-secondary: #4ade80;
   --accent-tertiary: #f472b6;
+  --good: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
   --text-primary: #f5f5f7;
   --text-secondary: #a1a1aa;
-  --text-muted: #52525b;
+  --text-muted: #6b6b75;
   --hairline: rgba(255, 255, 255, 0.06);
   --hairline-strong: rgba(255, 255, 255, 0.1);
-  --shadow-ambient: 0 20px 60px -20px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 40px -10px rgba(124, 108, 249, 0.15);
+  --shadow-ambient: 0 24px 70px -28px rgba(0, 0, 0, 0.65);
+  --shadow-glow: 0 0 40px -10px rgba(124, 108, 249, 0.18);
+  --shadow-tinted: 0 30px 80px -40px rgba(124, 108, 249, 0.35);
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   color-scheme: dark;
 }
 
@@ -43,10 +50,30 @@ html, body {
 body {
   color: var(--text-primary);
   background: var(--bg-deep);
-  min-height: 100vh;
-  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  letter-spacing: -0.01em;
+  min-height: 100dvh;
+  font-family: var(--font-sans);
+  letter-spacing: -0.011em;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
 }
+
+/* Tabular figures everywhere numbers appear in metric contexts */
+.tabular,
+[class*="text-"][class*="font-bold"],
+.card-liquid .text-2xl,
+.card-liquid .text-3xl,
+.card-liquid .text-4xl {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Crisper headlines */
+h1, h2, h3, .display {
+  letter-spacing: -0.024em;
+  font-feature-settings: 'cv11', 'ss01';
+  text-wrap: balance;
+}
+
+/* Mono helper for keys / numeric labels */
+.mono { font-family: var(--font-mono); font-feature-settings: 'tnum'; }
 
 a {
   color: inherit;
@@ -61,9 +88,9 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 80% 50% at 20% 40%, rgba(124, 108, 249, 0.08) 0%, transparent 50%),
-    radial-gradient(ellipse 60% 40% at 80% 60%, rgba(74, 222, 128, 0.05) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 50% at 50% 0%, rgba(244, 114, 182, 0.04) 0%, transparent 40%);
+    radial-gradient(ellipse 70% 45% at 18% 22%, rgba(124, 108, 249, 0.12) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 40% at 82% 78%, rgba(244, 114, 182, 0.06) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 50% at 50% 0%, rgba(74, 222, 128, 0.035) 0%, transparent 40%);
 }
 
 /* ─── Noise Texture Overlay ─── */
@@ -142,55 +169,84 @@ select option:hover {
   box-shadow: var(--shadow-ambient);
 }
 
-/* ─── Premium Button Base ─── */
+/* ─── Premium Button — primary action ─── */
 .btn-premium {
   position: relative;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
-  padding: 0.625rem 1.25rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  transition: all 0.4s cubic-bezier(0.32, 0.72, 0, 1);
-  border: 1px solid var(--hairline);
-  background: rgba(255, 255, 255, 0.03);
+  padding: 0.625rem 1.125rem;
+  border-radius: 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.011em;
+  font-variant-numeric: tabular-nums;
+  transition: transform 200ms cubic-bezier(0.32, 0.72, 0, 1),
+              background 200ms ease, border-color 200ms ease, box-shadow 250ms ease;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 80%),
+    rgba(255, 255, 255, 0.04);
   color: var(--text-primary);
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .btn-premium:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: var(--hairline-strong);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 80%),
+    rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
   transform: translateY(-1px);
-  box-shadow: var(--shadow-glow);
-}
-
-.btn-premium:active {
-  transform: translateY(0) scale(0.98);
-}
-
-/* ─── Liquid Glass Card ─── */
-.card-liquid {
-  background: rgba(15, 15, 18, 0.6);
-  border: 1px solid var(--hairline);
-  border-radius: 1.5rem;
-  backdrop-filter: blur(24px) saturate(1.2);
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 6px 18px -8px rgba(124, 108, 249, 0.45);
+}
+
+.btn-premium:active { transform: translateY(0) scale(0.98); }
+.btn-premium:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px rgba(124,108,249,0.6);
+}
+
+/* ─── Liquid Glass Card — true glassmorphism with edge refraction ─── */
+.card-liquid {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.018) 0%, rgba(255,255,255,0) 60%),
+    rgba(15, 15, 20, 0.62);
+  border: 1px solid var(--hairline);
+  border-radius: 1.25rem;
+  backdrop-filter: blur(24px) saturate(1.25);
+  -webkit-backdrop-filter: blur(24px) saturate(1.25);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.012),
     var(--shadow-ambient);
-  transition: all 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: border-color 250ms ease, background 250ms ease, transform 250ms ease, box-shadow 350ms ease;
 }
 
 .card-liquid:hover {
   border-color: var(--hairline-strong);
-  background: rgba(15, 15, 18, 0.7);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0) 60%),
+    rgba(18, 18, 24, 0.72);
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.08),
-    0 20px 60px -20px rgba(0, 0, 0, 0.6),
-    var(--shadow-glow);
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    var(--shadow-tinted);
 }
+
+/* Compact variant for dense data lists */
+.card-flat {
+  background: rgba(15, 15, 20, 0.5);
+  border: 1px solid var(--hairline);
+  border-radius: 0.875rem;
+  transition: border-color 200ms ease, background 200ms ease;
+}
+.card-flat:hover { border-color: var(--hairline-strong); background: rgba(20,20,26,0.6); }
 
 /* ─── Double Bezel Container ─── */
 .bezel-outer {
@@ -319,23 +375,36 @@ select option:hover {
 
 /* ─── Input Styling ─── */
 input, textarea {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--hairline);
-  border-radius: 0.875rem;
-  padding: 0.625rem 1rem;
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.875rem;
   color: var(--text-primary);
   font-size: 0.875rem;
-  transition: all 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  font-variant-numeric: tabular-nums;
+  transition: border-color 200ms ease, background 200ms ease, box-shadow 200ms ease;
+}
+
+input:hover, textarea:hover {
+  border-color: var(--hairline-strong);
 }
 
 input:focus, textarea:focus {
   outline: none;
-  border-color: rgba(124, 108, 249, 0.4);
-  box-shadow: 0 0 0 3px rgba(124, 108, 249, 0.1);
+  border-color: rgba(124, 108, 249, 0.55);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 0 0 3px rgba(124, 108, 249, 0.12);
 }
 
 input::placeholder, textarea::placeholder {
   color: var(--text-muted);
+}
+
+/* Universal focus ring */
+button:focus-visible, a:focus-visible, [role="button"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-deep), 0 0 0 4px rgba(124, 108, 249, 0.5);
+  border-radius: 0.75rem;
 }
 
 /* ─── Table Styling ─── */
